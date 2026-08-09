@@ -2,6 +2,10 @@
 packages:
   - "."
 
+# firebase-admin → jwks-rsa still require()'s jose; jose@5+ is ESM-only and crashes on Vercel
+overrides:
+  jose: 4.15.9
+
 # Explicitly allow/deny dependency install scripts (required by pnpm 11)
 allowBuilds:
   "@firebase/util": true

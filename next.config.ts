@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Spotify OAuth requires 127.0.0.1 (not localhost); allow HMR from that origin.
   allowedDevOrigins: ["127.0.0.1"],
+  serverExternalPackages: ["firebase-admin", "jose"],
   images: {
     remotePatterns: [
       {

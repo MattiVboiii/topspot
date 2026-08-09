@@ -10,7 +10,7 @@ export async function requireGuestId(
   }
   const idToken = header.slice("Bearer ".length);
   try {
-    const decoded = await getAdminAuth().verifyIdToken(idToken);
+    const decoded = await (await getAdminAuth()).verifyIdToken(idToken);
     return { guestId: decoded.uid };
   } catch {
     return NextResponse.json({ error: "Invalid guest auth" }, { status: 401 });

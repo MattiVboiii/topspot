@@ -1,5 +1,5 @@
 import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
-import { getAuth, type Auth } from "firebase-admin/auth";
+import type { Auth } from "firebase-admin/auth";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
 function getPrivateKey(): string {
@@ -38,6 +38,7 @@ export function getAdminDb(): Firestore {
   return getFirestore(getAdminApp());
 }
 
-export function getAdminAuth(): Auth {
+export async function getAdminAuth(): Promise<Auth> {
+  const { getAuth } = await import("firebase-admin/auth");
   return getAuth(getAdminApp());
 }
