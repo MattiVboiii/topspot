@@ -1,0 +1,35 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Host Spotify tokens — server (Admin SDK) only
+    match /hosts/{hostId} {
+      allow read, write: if false;
+    }
+
+    // Public read for live party sync; all writes via Admin SDK
+    match /parties/{partyId} {
+      allow read: if true;
+      allow write: if false;
+
+      match /tracks/{trackId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      match /votes/{voteId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      match /guests/{guestId} {
+        allow read: if true;
+        allow write: if false;
+      }
+    }
+
+    match /partyCodes/{code} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
