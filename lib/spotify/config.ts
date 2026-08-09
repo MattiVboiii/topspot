@@ -1,3 +1,5 @@
+import { getAppUrl } from "@/lib/app-url";
+
 export const SPOTIFY_SCOPES = [
   "user-read-email",
   "user-read-private",
@@ -60,7 +62,7 @@ export function getSpotifyClientSecret(): string {
 export function getSpotifyRedirectUri(): string {
   return (
     process.env.SPOTIFY_REDIRECT_URI ||
-    `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/spotify/callback`
+    `${getAppUrl()}/api/auth/spotify/callback`
   );
 }
 

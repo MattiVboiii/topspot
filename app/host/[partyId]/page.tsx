@@ -77,21 +77,20 @@ export default function HostPartyPage() {
   const [deviceLinked, setDeviceLinked] = useState<boolean | null>(null);
   const [activeDeviceName, setActiveDeviceName] = useState<string | null>(null);
   const [deviceCheckBusy, setDeviceCheckBusy] = useState(false);
-  const [autoLink, setAutoLink] = useState(false);
+  const [autoLink, setAutoLink] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(AUTO_LINK_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const linkingRef = useRef(false);
   const autoLinkRef = useRef(false);
   const partyPausedRef = useRef(true);
   const linkBrowserDeviceRef = useRef<
     (opts?: { silent?: boolean }) => Promise<void>
   >(async () => {});
-
-  useEffect(() => {
-    try {
-      setAutoLink(window.localStorage.getItem(AUTO_LINK_KEY) === "1");
-    } catch {
-      // ignore
-    }
-  }, []);
 
   useEffect(() => {
     autoLinkRef.current = autoLink;
@@ -350,7 +349,14 @@ export default function HostPartyPage() {
     [browserDeviceId, partyId, checkDeviceLink],
   );
 
-  linkBrowserDeviceRef.current = linkBrowserDevice;
+  useEffect(() => {
+    linkBrowserDeviceRef.current = linkBrowserDevice;
+  }, [linkBrowserDevice]);
+
+  const canControlDevice =
+    playerReady && Boolean(browserDeviceId) && isController;
+  const deviceLinkedForUi = canControlDevice ? deviceLinked : null;
+  const activeDeviceNameForUi = canControlDevice ? activeDeviceName : null;
 
   function onAutoLinkChange(enabled: boolean) {
     setAutoLink(enabled);
@@ -366,31 +372,32 @@ export default function HostPartyPage() {
   }
 
   useEffect(() => {
-    if (!playerReady || !browserDeviceId || !isController) {
-      setDeviceLinked(null);
-      setActiveDeviceName(null);
-      return;
-    }
-    void checkDeviceLink();
+    if (!canControlDevice) return;
+    const kickoff = window.setTimeout(() => {
+      void checkDeviceLink();
+    }, 0);
     const id = window.setInterval(() => void checkDeviceLink(), 20_000);
-    return () => window.clearInterval(id);
-  }, [playerReady, browserDeviceId, isController, checkDeviceLink]);
+    return () => {
+      window.clearTimeout(kickoff);
+      window.clearInterval(id);
+    };
+  }, [canControlDevice, checkDeviceLink]);
 
   // When playback resumes, immediately auto-link if needed.
   useEffect(() => {
-    if (!autoLink || !playerReady || !browserDeviceId || !isController) return;
+    if (!autoLink || !canControlDevice) return;
     if (party?.isPaused || !party?.nowPlaying) return;
     if (deviceLinked !== false) return;
-    void linkBrowserDevice({ silent: true });
+    const timer = window.setTimeout(() => {
+      void linkBrowserDeviceRef.current({ silent: true });
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [
     autoLink,
-    playerReady,
-    browserDeviceId,
-    isController,
+    canControlDevice,
     party?.isPaused,
     party?.nowPlaying,
     deviceLinked,
-    linkBrowserDevice,
   ]);
 
   async function onAdd(track: SpotifySearchTrack) {
@@ -593,8 +600,8 @@ export default function HostPartyPage() {
               playerReady={playerReady}
               busy={busy}
               status={sdkReady ? playerStatus : "loading_sdk"}
-              deviceLinked={deviceLinked}
-              activeDeviceName={activeDeviceName}
+              deviceLinked={deviceLinkedForUi}
+              activeDeviceName={activeDeviceNameForUi}
               deviceCheckBusy={deviceCheckBusy}
               autoLink={autoLink}
               onPlay={() => void control("play")}

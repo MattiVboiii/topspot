@@ -1,3 +1,4 @@
+import { safeReturnPath } from "@/lib/app-url";
 import {
   SPOTIFY_AUTH_URL,
   SPOTIFY_SCOPES,
@@ -11,7 +12,10 @@ export async function GET(request: NextRequest) {
     const intent = request.nextUrl.searchParams.get("intent") || "host";
     const partyId = request.nextUrl.searchParams.get("partyId");
     const guestId = request.nextUrl.searchParams.get("guestId");
-    const returnTo = request.nextUrl.searchParams.get("returnTo");
+    const returnTo = safeReturnPath(
+      request.nextUrl.searchParams.get("returnTo"),
+      "/",
+    );
 
     if (intent === "guest-link" && (!partyId || !guestId)) {
       return NextResponse.json(

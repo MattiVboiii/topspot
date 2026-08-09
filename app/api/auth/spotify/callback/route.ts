@@ -1,3 +1,4 @@
+import { getAppUrl, safeReturnPath } from "@/lib/app-url";
 import { setHostSessionCookie } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { exchangeCodeForTokens, fetchSpotifyProfile } from "@/lib/spotify/api";
@@ -17,13 +18,11 @@ function resolveRedirect(
   returnTo?: string | null,
   fallback = "/",
 ) {
-  if (!returnTo) return `${appUrl}${fallback}`;
-  if (returnTo.startsWith("http")) return returnTo;
-  return `${appUrl}${returnTo.startsWith("/") ? returnTo : `/${returnTo}`}`;
+  return `${appUrl}${safeReturnPath(returnTo, fallback)}`;
 }
 
 export async function GET(request: NextRequest) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const appUrl = getAppUrl();
   const { searchParams } = request.nextUrl;
   const code = searchParams.get("code");
   const state = searchParams.get("state");

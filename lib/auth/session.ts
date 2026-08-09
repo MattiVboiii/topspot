@@ -12,7 +12,9 @@ export type HostSession = {
 function getSecret(): Uint8Array {
   const secret = process.env.SESSION_SECRET;
   if (!secret || secret.length < 16) {
-    throw new Error("SESSION_SECRET must be set (16+ chars)");
+    throw new Error(
+      "SESSION_SECRET must be set (16+ chars; use 32+ in production)",
+    );
   }
   return new TextEncoder().encode(secret);
 }

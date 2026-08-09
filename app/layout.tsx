@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { DM_Sans, Geist_Mono, Syne } from "next/font/google";
 import "./globals.css";
 
@@ -19,8 +19,35 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "TopSpot — Party Jukebox",
+  title: {
+    default: "TopSpot — Party Jukebox",
+    template: "%s · TopSpot",
+  },
   description: "Democratic Spotify party queue. Guests vote, the host plays.",
+  applicationName: "TopSpot",
+  keywords: ["Spotify", "party", "jukebox", "queue", "voting"],
+  authors: [{ name: "TopSpot" }],
+  openGraph: {
+    title: "TopSpot — Party Jukebox",
+    description: "Democratic Spotify party queue. Guests vote, the host plays.",
+    type: "website",
+    siteName: "TopSpot",
+  },
+  twitter: {
+    card: "summary",
+    title: "TopSpot — Party Jukebox",
+    description: "Democratic Spotify party queue. Guests vote, the host plays.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0b1220",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
