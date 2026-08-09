@@ -9,6 +9,7 @@ export type HostRecord = {
   accessTokenExpiresAt: number;
   product: string;
   updatedAt: number;
+  activePartyId?: string | null;
 };
 
 export async function upsertHostTokens(input: {
@@ -62,4 +63,23 @@ export async function getHostAccessToken(spotifyId: string): Promise<string> {
     { merge: true },
   );
   return refreshed.access_token;
+}
+
+export async function setHostActiveParty(
+  spotifyId: string,
+  partyId: string | null,
+): Promise<void> {
+  await getAdminDb()
+    .collection("hosts")
+    .doc(spotifyId)
+    .set({ activePartyId: partyId, updatedAt: Date.now() }, { merge: true });
+}
+
+export async function getHostActivePartyId(
+  spotifyId: string,
+): Promise<string | null> {
+  const snap = await getAdminDb().collection("hosts").doc(spotifyId).get();
+  if (!snap.exists) return null;
+  const data = snap.data() as HostRecord;
+  return data.activePartyId ?? null;
 }

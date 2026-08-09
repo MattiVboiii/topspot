@@ -67,19 +67,40 @@ export async function POST(
     displayName = name;
   }
 
-  await db
+  const now = Date.now();
+  const guestRef = db
     .collection("parties")
     .doc(partyId)
     .collection("guests")
-    .doc(guest.guestId)
-    .set(
-      {
-        id: guest.guestId,
-        displayName,
-        joinedAt: Date.now(),
-      },
-      { merge: true },
-    );
+    .doc(guest.guestId);
+  const existing = await guestRef.get();
+  await guestRef.set(
+    {
+      id: guest.guestId,
+      displayName:
+        displayName ??
+        (existing.exists
+          ? ((existing.data() as { displayName?: string | null }).displayName ??
+            null)
+          : null),
+      joinedAt: existing.exists
+        ? ((existing.data() as { joinedAt?: number }).joinedAt ?? now)
+        : now,
+      lastSeenAt: now,
+      isSearching: false,
+      spotifyId: existing.exists
+        ? ((existing.data() as { spotifyId?: string | null }).spotifyId ?? null)
+        : null,
+      spotifyDisplayName: existing.exists
+        ? ((existing.data() as { spotifyDisplayName?: string | null })
+            .spotifyDisplayName ?? null)
+        : null,
+      isPremium: existing.exists
+        ? Boolean((existing.data() as { isPremium?: boolean }).isPremium)
+        : false,
+    },
+    { merge: true },
+  );
 
   return NextResponse.json({ party, guestId: guest.guestId, displayName });
 }

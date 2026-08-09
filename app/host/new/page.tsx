@@ -1,8 +1,15 @@
 "use client";
 
+import {
+  HowItWorks,
+  markHowItWorksSeen,
+  useHowItWorksDismissed,
+} from "@/components/party/how-it-works";
 import type { GuestMode } from "@/lib/types/party";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+
+const HOST_HOWTO_KEY = "topspot_host_howto_v1";
 
 export default function NewPartyPage() {
   const router = useRouter();
@@ -12,22 +19,43 @@ export default function NewPartyPage() {
   const [authState, setAuthState] = useState<"loading" | "in" | "out">(
     "loading",
   );
+  const howtoSeen = useHowItWorksDismissed(HOST_HOWTO_KEY);
+  const [howtoJustDismissed, setHowtoJustDismissed] = useState(false);
+  const showExplainer = !howtoSeen && !howtoJustDismissed;
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/auth/session")
-      .then((res) => res.json())
-      .then((data: { authenticated?: boolean }) => {
+    async function bootstrap() {
+      try {
+        const sessionRes = await fetch("/api/auth/session");
+        const session = (await sessionRes.json()) as {
+          authenticated?: boolean;
+        };
         if (cancelled) return;
-        setAuthState(data.authenticated ? "in" : "out");
-      })
-      .catch(() => {
+        if (!session.authenticated) {
+          setAuthState("out");
+          return;
+        }
+        setAuthState("in");
+
+        const partyRes = await fetch("/api/parties");
+        const data = (await partyRes.json()) as {
+          party?: { id: string };
+        };
+        if (cancelled) return;
+        if (data.party?.id) {
+          router.replace(`/host/${data.party.id}`);
+          return;
+        }
+      } catch {
         if (!cancelled) setAuthState("out");
-      });
+      }
+    }
+    void bootstrap();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   async function createParty() {
     setBusy(true);
@@ -40,6 +68,7 @@ export default function NewPartyPage() {
       });
       const data = (await res.json()) as {
         party?: { id: string };
+        resumed?: boolean;
         error?: string;
       };
       if (!res.ok || !data.party) {
@@ -68,11 +97,26 @@ export default function NewPartyPage() {
           Host a party with your Spotify Premium account.
         </p>
         <a
-          href="/api/auth/spotify"
+          href="/api/auth/spotify?intent=host&returnTo=/host/new"
           className="rounded-2xl bg-emerald-400 px-5 py-3 font-semibold text-emerald-950"
         >
           Sign in with Spotify
         </a>
+      </main>
+    );
+  }
+
+  if (showExplainer) {
+    return (
+      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-4 py-10">
+        <HowItWorks
+          role="host"
+          continueLabel="Set up party"
+          onContinue={() => {
+            markHowItWorksSeen(HOST_HOWTO_KEY);
+            setHowtoJustDismissed(true);
+          }}
+        />
       </main>
     );
   }
@@ -83,8 +127,8 @@ export default function NewPartyPage() {
         New party
       </h1>
       <p className="mt-3 text-white/65">
-        Choose how guests identify themselves. You can change this later from
-        the host dashboard.
+        Choose how guests identify themselves. You can change this later in
+        Settings.
       </p>
 
       <fieldset className="mt-8 flex flex-col gap-3">

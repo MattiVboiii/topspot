@@ -1,7 +1,16 @@
 import { getHostSession } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
-import type { GuestMode, Party } from "@/lib/types/party";
+import { isPartyOwner } from "@/lib/party/ownership";
+import { setHostActiveParty } from "@/lib/spotify/host-tokens";
+import type { DownvoteMode, GuestMode, Party } from "@/lib/types/party";
 import { NextRequest, NextResponse } from "next/server";
+
+const DOWNVOTE_MODES: DownvoteMode[] = [
+  "off",
+  "score",
+  "threshold",
+  "score_and_threshold",
+];
 
 export async function GET(
   _request: NextRequest,
@@ -31,7 +40,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Party not found" }, { status: 404 });
   }
   const party = snap.data() as Party;
-  if (party.hostSpotifyId !== session.spotifyId) {
+  if (!isPartyOwner(party, session.spotifyId)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -39,6 +48,10 @@ export async function PATCH(
     guestMode?: GuestMode;
     isActive?: boolean;
     deviceId?: string | null;
+    downvoteMode?: DownvoteMode;
+    downvoteThreshold?: number | null;
+    fallbackPlaylistId?: string | null;
+    fallbackPlaylistName?: string | null;
   };
 
   const updates: Partial<Party> = {};
@@ -51,8 +64,31 @@ export async function PATCH(
   if (body.deviceId !== undefined) {
     updates.deviceId = body.deviceId;
   }
+  if (body.downvoteMode && DOWNVOTE_MODES.includes(body.downvoteMode)) {
+    updates.downvoteMode = body.downvoteMode;
+  }
+  if (body.downvoteThreshold !== undefined) {
+    if (
+      body.downvoteThreshold === null ||
+      (typeof body.downvoteThreshold === "number" &&
+        body.downvoteThreshold >= 1)
+    ) {
+      updates.downvoteThreshold = body.downvoteThreshold;
+    }
+  }
+  if (body.fallbackPlaylistId !== undefined) {
+    updates.fallbackPlaylistId = body.fallbackPlaylistId;
+  }
+  if (body.fallbackPlaylistName !== undefined) {
+    updates.fallbackPlaylistName = body.fallbackPlaylistName;
+  }
 
   await ref.set(updates, { merge: true });
+
+  if (body.isActive === false) {
+    await setHostActiveParty(session.spotifyId, null);
+  }
+
   const next = (await ref.get()).data() as Party;
   return NextResponse.json({ party: next });
 }

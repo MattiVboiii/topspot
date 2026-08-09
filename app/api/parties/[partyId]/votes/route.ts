@@ -1,7 +1,16 @@
 import { isErrorResponse, requireGuestId } from "@/lib/auth/guest";
 import { getAdminDb } from "@/lib/firebase/admin";
-import type { Party, PartyGuest, PartyTrack } from "@/lib/types/party";
-import { FieldValue } from "firebase-admin/firestore";
+import {
+  downvotesEnabled,
+  netVoteCount,
+  usesDownvoteThreshold,
+} from "@/lib/party/queue";
+import type {
+  Party,
+  PartyGuest,
+  PartyTrack,
+  PartyVote,
+} from "@/lib/types/party";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(
@@ -14,9 +23,12 @@ export async function POST(
   const { partyId } = await context.params;
   const body = (await request.json()) as {
     trackId?: string;
-    action?: "up" | "down";
+    action?: "up" | "down" | "clear";
   };
-  if (!body.trackId || (body.action !== "up" && body.action !== "down")) {
+  if (
+    !body.trackId ||
+    (body.action !== "up" && body.action !== "down" && body.action !== "clear")
+  ) {
     return NextResponse.json({ error: "Invalid vote" }, { status: 400 });
   }
 
@@ -29,6 +41,14 @@ export async function POST(
   const party = partySnap.data() as Party;
   if (!party.isActive) {
     return NextResponse.json({ error: "Party has ended" }, { status: 410 });
+  }
+
+  const downvoteMode = party.downvoteMode ?? "off";
+  if (body.action === "down" && !downvotesEnabled(downvoteMode)) {
+    return NextResponse.json(
+      { error: "Downvotes are disabled for this party" },
+      { status: 403 },
+    );
   }
 
   const guestSnap = await partyRef
@@ -58,39 +78,76 @@ export async function POST(
   const voteId = `${body.trackId}_${guest.guestId}`;
   const voteRef = partyRef.collection("votes").doc(voteId);
   const voteSnap = await voteRef.get();
+  const existing = voteSnap.exists ? (voteSnap.data() as PartyVote) : null;
+  const previousValue = existing?.value ?? 0;
 
+  let nextValue: 0 | 1 | -1 = 0;
   if (body.action === "up") {
-    if (voteSnap.exists) {
-      return NextResponse.json({
-        track: trackSnap.data() as PartyTrack,
-        voted: true,
-      });
-    }
-    const batch = db.batch();
+    nextValue = previousValue === 1 ? 0 : 1;
+  } else if (body.action === "down") {
+    nextValue = previousValue === -1 ? 0 : -1;
+  } else {
+    nextValue = 0;
+  }
+
+  let up = (trackSnap.data() as PartyTrack).upVoteCount ?? 0;
+  let down = (trackSnap.data() as PartyTrack).downVoteCount ?? 0;
+  if (previousValue === 1) up -= 1;
+  if (previousValue === -1) down -= 1;
+  if (nextValue === 1) up += 1;
+  if (nextValue === -1) down += 1;
+  up = Math.max(0, up);
+  down = Math.max(0, down);
+
+  const batch = db.batch();
+  if (nextValue === 0) {
+    if (voteSnap.exists) batch.delete(voteRef);
+  } else {
     batch.set(voteRef, {
       trackId: body.trackId,
       guestId: guest.guestId,
-      createdAt: Date.now(),
+      value: nextValue,
+      createdAt: existing?.createdAt ?? Date.now(),
+    } satisfies PartyVote);
+  }
+
+  const voteCount = netVoteCount(up, down, downvoteMode);
+  batch.update(trackRef, {
+    upVoteCount: up,
+    downVoteCount: down,
+    voteCount,
+  });
+
+  const threshold = party.downvoteThreshold ?? null;
+  const shouldRemove =
+    usesDownvoteThreshold(downvoteMode) &&
+    typeof threshold === "number" &&
+    down >= threshold;
+
+  if (shouldRemove) {
+    batch.delete(trackRef);
+    const votes = await partyRef
+      .collection("votes")
+      .where("trackId", "==", body.trackId)
+      .get();
+    votes.docs.forEach((doc) => batch.delete(doc.ref));
+  }
+
+  await batch.commit();
+
+  if (shouldRemove) {
+    return NextResponse.json({
+      track: null,
+      removed: true,
+      myVote: 0,
     });
-    batch.update(trackRef, { voteCount: FieldValue.increment(1) });
-    await batch.commit();
-  } else {
-    if (!voteSnap.exists) {
-      return NextResponse.json({
-        track: trackSnap.data() as PartyTrack,
-        voted: false,
-      });
-    }
-    const batch = db.batch();
-    batch.delete(voteRef);
-    batch.update(trackRef, { voteCount: FieldValue.increment(-1) });
-    await batch.commit();
   }
 
   const next = (await trackRef.get()).data() as PartyTrack;
   return NextResponse.json({
     track: next,
-    voted: body.action === "up",
+    removed: false,
+    myVote: nextValue,
   });
 }
 
@@ -109,8 +166,14 @@ export async function GET(
     .where("guestId", "==", guest.guestId)
     .get();
 
-  const trackIds = snap.docs.map(
-    (doc) => (doc.data() as { trackId: string }).trackId,
-  );
-  return NextResponse.json({ trackIds });
+  const votes: Record<string, 1 | -1> = {};
+  const trackIds: string[] = [];
+  snap.docs.forEach((doc) => {
+    const data = doc.data() as PartyVote;
+    const value = data.value === -1 ? -1 : 1;
+    votes[data.trackId] = value;
+    if (value === 1) trackIds.push(data.trackId);
+  });
+
+  return NextResponse.json({ votes, trackIds });
 }

@@ -7,6 +7,11 @@
         { "fieldPath": "voteCount", "order": "DESCENDING" },
         { "fieldPath": "addedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "guests",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "joinedAt", "order": "ASCENDING" }]
     }
   ],
   "fieldOverrides": []

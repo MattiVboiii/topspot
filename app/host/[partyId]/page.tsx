@@ -1,17 +1,28 @@
 "use client";
 
 import { HostControls } from "@/components/party/host-controls";
+import { HostSettingsPanel } from "@/components/party/host-settings-panel";
+import {
+  HowItWorks,
+  markHowItWorksSeen,
+  useHowItWorksDismissed,
+} from "@/components/party/how-it-works";
+import { NowPlayingBar } from "@/components/party/now-playing-bar";
 import { QrCard } from "@/components/party/qr-card";
 import { QueueList } from "@/components/party/queue-list";
 import { TrackSearch } from "@/components/party/track-search";
 import { useGuestAuth } from "@/lib/hooks/use-guest-auth";
+import { useGuestPresence } from "@/lib/hooks/use-guest-presence";
 import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
 import { useSpotifyPlayer } from "@/lib/hooks/use-spotify-player";
-import type { GuestMode, SpotifySearchTrack } from "@/lib/types/party";
+import { isGuestOnline } from "@/lib/party/queue";
+import type { SpotifySearchTrack } from "@/lib/types/party";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import Script from "next/script";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+const HOST_HOWTO_KEY = "topspot_host_howto_v1";
 
 export default function HostPartyPage() {
   const params = useParams<{ partyId: string }>();
@@ -19,21 +30,62 @@ export default function HostPartyPage() {
   const [authState, setAuthState] = useState<"loading" | "in" | "out">(
     "loading",
   );
+  const [sessionSpotifyId, setSessionSpotifyId] = useState<string | null>(null);
   const [sdkReady, setSdkReady] = useState(false);
-  const { party, tracks, error: realtimeError } = usePartyRealtime(partyId);
+  const howtoSeen = useHowItWorksDismissed(HOST_HOWTO_KEY);
+  const [howtoJustDismissed, setHowtoJustDismissed] = useState(false);
+  const showExplainer = !howtoSeen && !howtoJustDismissed;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const {
+    party,
+    tracks,
+    guests,
+    error: realtimeError,
+  } = usePartyRealtime(partyId);
   const { ready: guestReady, getIdToken, error: guestError } = useGuestAuth();
+  const isOwner = Boolean(
+    party && sessionSpotifyId && party.hostSpotifyId === sessionSpotifyId,
+  );
+  const isController = Boolean(
+    party &&
+    sessionSpotifyId &&
+    (party.playbackSpotifyId || party.hostSpotifyId) === sessionSpotifyId,
+  );
+  // Keep SDK enablement stable so progress Firestore ticks don't recreate the player.
+  const playerEnabled =
+    authState === "in" &&
+    Boolean(partyId) &&
+    sdkReady &&
+    !showExplainer &&
+    isController;
   const {
     ready: playerReady,
     error: playerError,
     status: playerStatus,
-  } = useSpotifyPlayer(
-    authState === "in" && Boolean(partyId) && sdkReady,
-    partyId,
-  );
+    positionMs,
+  } = useSpotifyPlayer(playerEnabled, partyId);
 
-  const [myVotes, setMyVotes] = useState<Set<string>>(new Set());
+  const [myVotes, setMyVotes] = useState<Record<string, 1 | -1>>({});
+  const [guestId, setGuestId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [, setPresenceTick] = useState(0);
+
+  useGuestPresence({
+    partyId,
+    enabled: authState === "in" && Boolean(guestId) && !showExplainer,
+    isSearching,
+    getIdToken,
+  });
+
+  useEffect(() => {
+    const id = window.setInterval(() => setPresenceTick((n) => n + 1), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const onlineGuests = guests.filter((g) => isGuestOnline(g));
 
   const joinUrl = useMemo(() => {
     if (!party?.code) return "";
@@ -69,9 +121,10 @@ export default function HostPartyPage() {
     let cancelled = false;
     fetch("/api/auth/session")
       .then((res) => res.json())
-      .then((data: { authenticated?: boolean }) => {
+      .then((data: { authenticated?: boolean; spotifyId?: string }) => {
         if (cancelled) return;
         setAuthState(data.authenticated ? "in" : "out");
+        setSessionSpotifyId(data.spotifyId ?? null);
       })
       .catch(() => {
         if (!cancelled) setAuthState("out");
@@ -81,31 +134,66 @@ export default function HostPartyPage() {
     };
   }, []);
 
+  const partyCode = party?.code;
+  const hostDisplayName = party?.hostDisplayName;
+  const joinedRef = useRef(false);
+
   useEffect(() => {
-    if (!party || authState !== "in") return;
+    if (
+      !partyCode ||
+      !hostDisplayName ||
+      authState !== "in" ||
+      showExplainer ||
+      !guestReady ||
+      joinedRef.current
+    ) {
+      return;
+    }
+    let cancelled = false;
     async function ensureHostGuest() {
-      if (!guestReady) return;
-      const token = await getIdToken();
-      await fetch(`/api/parties/by-code/${party!.code}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          displayName: party!.hostDisplayName,
-        }),
-      });
-      const votesRes = await fetch(`/api/parties/${partyId}/votes`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (votesRes.ok) {
-        const data = (await votesRes.json()) as { trackIds: string[] };
-        setMyVotes(new Set(data.trackIds));
+      try {
+        const token = await getIdToken();
+        const joinRes = await fetch(`/api/parties/by-code/${partyCode}`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            displayName: hostDisplayName,
+          }),
+        });
+        if (cancelled) return;
+        if (joinRes.ok) {
+          joinedRef.current = true;
+          const data = (await joinRes.json()) as { guestId?: string };
+          if (data.guestId) setGuestId(data.guestId);
+        }
+        const votesRes = await fetch(`/api/parties/${partyId}/votes`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (cancelled || !votesRes.ok) return;
+        const data = (await votesRes.json()) as {
+          votes?: Record<string, 1 | -1>;
+        };
+        setMyVotes(data.votes ?? {});
+      } catch {
+        // retry on next dependency change
       }
     }
     void ensureHostGuest();
-  }, [party, authState, guestReady, getIdToken, partyId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    partyCode,
+    hostDisplayName,
+    authState,
+    guestReady,
+    getIdToken,
+    partyId,
+    showExplainer,
+  ]);
 
   const authedFetch = useCallback(
     async (url: string, init?: RequestInit) => {
@@ -129,7 +217,10 @@ export default function HostPartyPage() {
       const res = await fetch(`/api/parties/${partyId}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({
+          action,
+          ...(action === "pause" ? { positionMs } : {}),
+        }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Control failed");
@@ -143,11 +234,11 @@ export default function HostPartyPage() {
   async function onAdd(track: SpotifySearchTrack) {
     const res = await authedFetch(`/api/parties/${partyId}/tracks`, {
       method: "POST",
-      body: JSON.stringify({ track }),
+      body: JSON.stringify({ track, source: "request" }),
     });
     const data = (await res.json()) as { error?: string };
     if (!res.ok) throw new Error(data.error || "Could not add track");
-    setMyVotes((prev) => new Set(prev).add(track.id));
+    setMyVotes((prev) => ({ ...prev, [track.id]: 1 }));
   }
 
   async function onVote(trackId: string, action: "up" | "down") {
@@ -156,10 +247,11 @@ export default function HostPartyPage() {
       body: JSON.stringify({ trackId, action }),
     });
     if (!res.ok) return;
+    const data = (await res.json()) as { myVote?: 0 | 1 | -1 };
     setMyVotes((prev) => {
-      const next = new Set(prev);
-      if (action === "up") next.add(trackId);
-      else next.delete(trackId);
+      const next = { ...prev };
+      if (!data.myVote) delete next[trackId];
+      else next[trackId] = data.myVote;
       return next;
     });
   }
@@ -171,12 +263,32 @@ export default function HostPartyPage() {
     );
   }
 
-  async function setGuestMode(mode: GuestMode) {
-    await fetch(`/api/parties/${partyId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ guestMode: mode }),
-    });
+  async function reclaimControl() {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/parties/${partyId}/transfer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reclaim" }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Could not reclaim control");
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Could not reclaim control",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (authState === "loading") {
+    return (
+      <main className="flex flex-1 items-center justify-center p-8 text-white/60">
+        Loading…
+      </main>
+    );
   }
 
   if (authState === "out") {
@@ -186,11 +298,26 @@ export default function HostPartyPage() {
           Sign in as the host to control this party.
         </p>
         <a
-          href="/api/auth/spotify"
+          href={`/api/auth/spotify?intent=host&returnTo=${encodeURIComponent(`/host/${partyId}`)}`}
           className="rounded-2xl bg-emerald-400 px-5 py-3 font-semibold text-emerald-950"
         >
           Sign in with Spotify
         </a>
+      </main>
+    );
+  }
+
+  if (showExplainer) {
+    return (
+      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-4 py-10">
+        <HowItWorks
+          role="host"
+          continueLabel="Open host dashboard"
+          onContinue={() => {
+            markHowItWorksSeen(HOST_HOWTO_KEY);
+            setHowtoJustDismissed(true);
+          }}
+        />
       </main>
     );
   }
@@ -203,7 +330,21 @@ export default function HostPartyPage() {
     );
   }
 
-  const nowPlaying = tracks.find((t) => t.id === party.nowPlayingTrackId);
+  if (!isOwner && !isController) {
+    return (
+      <main className="mx-auto flex max-w-md flex-1 flex-col justify-center gap-4 px-6 py-16 text-center">
+        <p className="text-white/70">
+          You&apos;re signed in, but this party belongs to another Spotify
+          account. Join with the party code as a guest, or sign in as the owner.
+        </p>
+        <Link href="/" className="text-emerald-300 underline">
+          Back home
+        </Link>
+      </main>
+    );
+  }
+
+  const controllerLabel = guests.find((g) => g.id === party.playbackGuestId);
 
   return (
     <>
@@ -217,94 +358,161 @@ export default function HostPartyPage() {
           }
         }}
       />
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-4 py-8 sm:px-6">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-5 px-4 py-6 pb-24 sm:px-6">
+        <header className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             <Link
               href="/"
               className="text-sm text-emerald-300/80 hover:underline"
             >
               ← Topspot
             </Link>
-            <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-bold text-white">
-              Host dashboard
+            <h1 className="mt-2 font-[family-name:var(--font-display)] text-2xl font-bold text-white sm:text-3xl">
+              {isOwner ? "Host" : "Music control"} · {party.code}
             </h1>
-            <p className="text-white/60">Playing as {party.hostDisplayName}</p>
+            <p className="truncate text-sm text-white/60">
+              {isOwner
+                ? `Owned by ${party.hostDisplayName}`
+                : `Playing for ${party.hostDisplayName}'s party`}
+            </p>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <label className="text-xs uppercase tracking-[0.2em] text-white/45">
-              Guest mode
-            </label>
-            <select
-              value={party.guestMode}
-              onChange={(e) => void setGuestMode(e.target.value as GuestMode)}
-              className="rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-white"
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => setShowQr(true)}
+              className="rounded-xl border border-white/15 px-3 py-2 text-sm font-semibold text-white"
             >
-              <option value="anonymous">Anonymous</option>
-              <option value="named">By name</option>
-            </select>
+              QR
+            </button>
+            {isOwner && (
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold text-white"
+              >
+                Settings
+              </button>
+            )}
           </div>
         </header>
 
-        <div className="grid gap-8 lg:grid-cols-[320px_1fr]">
-          <QrCard joinUrl={joinUrl} code={party.code} />
-
-          <section className="flex flex-col gap-6">
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-              <p className="text-xs uppercase tracking-[0.2em] text-white/45">
-                Now playing
-              </p>
-              <p className="mt-2 text-2xl font-semibold text-white">
-                {nowPlaying ? nowPlaying.name : "Nothing yet"}
-              </p>
-              <p className="text-white/55">
-                {nowPlaying ? nowPlaying.artists : "Add tracks and hit Play"}
-              </p>
-              <div className="mt-5">
-                <HostControls
-                  isPaused={party.isPaused || !party.nowPlayingTrackId}
-                  playerReady={playerReady}
-                  busy={busy}
-                  status={sdkReady ? playerStatus : "loading_sdk"}
-                  onPlay={() => void control("play")}
-                  onPause={() => void control("pause")}
-                  onSkip={() => void control("skip")}
-                />
-              </div>
-              {(playerError || actionError) && (
-                <p className="mt-3 text-sm text-amber-200">
-                  {actionError || playerError}
-                </p>
-              )}
-              {!playerReady && !playerError && (
-                <p className="mt-2 text-xs text-white/45">
-                  Use Chrome, Edge, or Firefox. Spotify Premium required. Keep
-                  this tab open while music plays.
-                </p>
-              )}
-            </div>
-
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-              <h2 className="mb-4 text-lg font-semibold text-white">
-                Add tracks
-              </h2>
-              <TrackSearch partyId={partyId} onAdd={onAdd} />
-            </div>
-
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-              <h2 className="mb-4 text-lg font-semibold text-white">Queue</h2>
-              <QueueList
-                tracks={tracks}
-                nowPlayingTrackId={party.nowPlayingTrackId}
-                myVotes={myVotes}
-                isHost
-                onVote={onVote}
-                onRemove={onRemove}
-              />
-            </div>
+        {isOwner && !isController && (
+          <section className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4">
+            <p className="font-semibold text-amber-100">
+              Music control is with{" "}
+              {controllerLabel?.spotifyDisplayName ||
+                controllerLabel?.displayName ||
+                "a guest"}
+            </p>
+            <p className="mt-1 text-sm text-amber-100/80">
+              You still own this party and can change settings anytime.
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void reclaimControl()}
+              className="mt-3 rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-amber-950 disabled:opacity-50"
+            >
+              Take music control back
+            </button>
           </section>
-        </div>
+        )}
+
+        <NowPlayingBar
+          key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
+          party={party}
+          livePositionMs={isController && playerReady ? positionMs : null}
+        />
+
+        {isController ? (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <HostControls
+              isPaused={party.isPaused || !party.nowPlaying}
+              playerReady={playerReady}
+              busy={busy}
+              status={sdkReady ? playerStatus : "loading_sdk"}
+              onPlay={() => void control("play")}
+              onPause={() => void control("pause")}
+              onSkip={() => void control("skip")}
+            />
+            {(playerError || actionError) && (
+              <p className="mt-3 text-sm text-amber-200">
+                {actionError || playerError}
+              </p>
+            )}
+            {!playerReady && !playerError && (
+              <p className="mt-2 text-xs text-white/45">
+                Use Chrome, Edge, or Firefox. Spotify Premium required. Keep
+                this tab open while music plays.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
+            Playback controls are on the guest&apos;s device until you take
+            control back.
+          </p>
+        )}
+
+        <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <h2 className="mb-3 text-lg font-semibold text-white">Add tracks</h2>
+          <TrackSearch
+            partyId={partyId}
+            onAdd={onAdd}
+            getIdToken={getIdToken}
+            guestId={guestId}
+            spotifyLinked
+            returnTo={`/host/${partyId}`}
+            onSearchingChange={setIsSearching}
+          />
+        </section>
+
+        <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold text-white">Queue</h2>
+            <p className="text-xs text-white/45">
+              {onlineGuests.length} online · {guests.length} joined
+            </p>
+          </div>
+          <QueueList
+            tracks={tracks}
+            myVotes={myVotes}
+            downvoteMode={party.downvoteMode ?? "off"}
+            isHost={isOwner}
+            onVote={onVote}
+            onRemove={isOwner ? onRemove : undefined}
+          />
+        </section>
       </main>
+
+      {settingsOpen && isOwner && (
+        <HostSettingsPanel
+          key={`${party.guestMode}-${party.downvoteMode}-${party.downvoteThreshold}`}
+          party={party}
+          partyId={partyId}
+          guests={guests}
+          getIdToken={getIdToken}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {showQr && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4">
+          <div className="w-full max-w-sm rounded-t-3xl border border-white/10 bg-[#0b1520] p-4 sm:rounded-3xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-semibold text-white">Invite guests</h2>
+              <button
+                type="button"
+                onClick={() => setShowQr(false)}
+                className="text-white/60"
+              >
+                Close
+              </button>
+            </div>
+            <QrCard joinUrl={joinUrl} code={party.code} />
+          </div>
+        </div>
+      )}
     </>
   );
 }

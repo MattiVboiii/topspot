@@ -1,5 +1,7 @@
 import { getHostSession } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { isPlaybackController } from "@/lib/party/ownership";
+import { nextQueueTrack, toNowPlayingSnapshot } from "@/lib/party/queue";
 import {
   pausePlayback,
   resumePlayback,
@@ -8,10 +10,10 @@ import {
 } from "@/lib/spotify/api";
 import { getHostAccessToken } from "@/lib/spotify/host-tokens";
 import type { Party, PartyTrack } from "@/lib/types/party";
-import type { DocumentReference } from "firebase-admin/firestore";
+import type { DocumentReference, WriteBatch } from "firebase-admin/firestore";
 import { NextRequest, NextResponse } from "next/server";
 
-async function requireHostParty(partyId: string, spotifyId: string) {
+async function requirePlaybackParty(partyId: string, spotifyId: string) {
   const ref = getAdminDb().collection("parties").doc(partyId);
   const snap = await ref.get();
   if (!snap.exists) {
@@ -20,23 +22,65 @@ async function requireHostParty(partyId: string, spotifyId: string) {
     } as const;
   }
   const party = snap.data() as Party;
-  if (party.hostSpotifyId !== spotifyId) {
+  if (!isPlaybackController(party, spotifyId)) {
     return {
-      error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+      error: NextResponse.json(
+        { error: "Only the current music controller can do that" },
+        { status: 403 },
+      ),
     } as const;
   }
   return { party, ref } as const;
 }
 
-async function getSortedTracks(partyId: string): Promise<PartyTrack[]> {
+async function getQueueTracks(partyId: string): Promise<PartyTrack[]> {
   const snap = await getAdminDb()
     .collection("parties")
     .doc(partyId)
     .collection("tracks")
-    .orderBy("voteCount", "desc")
-    .orderBy("addedAt", "asc")
     .get();
   return snap.docs.map((doc) => doc.data() as PartyTrack);
+}
+
+async function deleteTrackAndVotes(
+  ref: DocumentReference,
+  trackId: string,
+  batch: WriteBatch,
+) {
+  batch.delete(ref.collection("tracks").doc(trackId));
+  const votes = await ref
+    .collection("votes")
+    .where("trackId", "==", trackId)
+    .get();
+  votes.docs.forEach((doc) => batch.delete(doc.ref));
+}
+
+async function promoteTrackToNowPlaying(opts: {
+  ref: DocumentReference;
+  track: PartyTrack;
+  deviceId: string;
+  isPaused?: boolean;
+  positionMs?: number;
+}) {
+  const now = Date.now();
+  const snapshot = toNowPlayingSnapshot(opts.track, now);
+  const batch = getAdminDb().batch();
+  await deleteTrackAndVotes(opts.ref, opts.track.id, batch);
+  batch.set(
+    opts.ref,
+    {
+      nowPlayingTrackId: opts.track.id,
+      nowPlaying: snapshot,
+      isPaused: opts.isPaused ?? false,
+      deviceId: opts.deviceId,
+      playbackPositionMs: opts.positionMs ?? 0,
+      playbackUpdatedAt: now,
+      playbackStartedAt: now,
+    },
+    { merge: true },
+  );
+  await batch.commit();
+  return snapshot;
 }
 
 export async function POST(
@@ -49,7 +93,7 @@ export async function POST(
   }
 
   const { partyId } = await context.params;
-  const result = await requireHostParty(partyId, session.spotifyId);
+  const result = await requirePlaybackParty(partyId, session.spotifyId);
   if ("error" in result) return result.error;
   const { party, ref } = result as {
     party: Party;
@@ -59,6 +103,7 @@ export async function POST(
   const body = (await request.json()) as {
     action?: "play" | "pause" | "skip" | "register-device";
     deviceId?: string;
+    positionMs?: number;
   };
 
   try {
@@ -71,8 +116,22 @@ export async function POST(
           { status: 400 },
         );
       }
+      if (party.deviceId === body.deviceId) {
+        return NextResponse.json({ ok: true, deviceId: body.deviceId });
+      }
       await ref.set({ deviceId: body.deviceId }, { merge: true });
       await transferPlayback(accessToken, body.deviceId, false);
+
+      // After host handoff, resume current track on the new device if needed.
+      if (party.nowPlaying && !party.isPaused) {
+        await startPlayback(
+          accessToken,
+          body.deviceId,
+          [party.nowPlaying.uri],
+          party.playbackPositionMs || 0,
+        );
+      }
+
       return NextResponse.json({ ok: true, deviceId: body.deviceId });
     }
 
@@ -89,98 +148,95 @@ export async function POST(
 
     if (body.action === "pause") {
       await pausePlayback(accessToken, deviceId);
-      await ref.set({ isPaused: true }, { merge: true });
+      const position =
+        typeof body.positionMs === "number" && body.positionMs >= 0
+          ? Math.floor(body.positionMs)
+          : party.playbackPositionMs || 0;
+      await ref.set(
+        {
+          isPaused: true,
+          playbackPositionMs: position,
+          playbackUpdatedAt: Date.now(),
+        },
+        { merge: true },
+      );
       return NextResponse.json({ ok: true });
     }
 
     if (body.action === "play") {
-      let trackId = party.nowPlayingTrackId;
-      const tracks = await getSortedTracks(partyId);
-
-      if (!trackId || !tracks.some((t) => t.id === trackId)) {
-        const next = tracks[0];
-        if (!next) {
-          return NextResponse.json(
-            { error: "Queue is empty" },
-            { status: 400 },
-          );
-        }
-        trackId = next.id;
-        await startPlayback(accessToken, deviceId, [next.uri]);
-        const batch = getAdminDb().batch();
-        tracks.forEach((t) => {
-          batch.set(
-            ref.collection("tracks").doc(t.id),
-            { isPlaying: t.id === trackId },
-            { merge: true },
-          );
-        });
-        batch.set(
-          ref,
+      if (party.nowPlaying && party.isPaused) {
+        await resumePlayback(accessToken, deviceId);
+        await ref.set(
           {
-            nowPlayingTrackId: trackId,
             isPaused: false,
             deviceId,
+            playbackUpdatedAt: Date.now(),
+            // Keep frozen pause position as the resume baseline for guests.
+            playbackPositionMs: party.playbackPositionMs || 0,
           },
           { merge: true },
         );
-        await batch.commit();
-        return NextResponse.json({ ok: true, trackId });
+        return NextResponse.json({
+          ok: true,
+          trackId: party.nowPlaying.id,
+        });
       }
 
-      await resumePlayback(accessToken, deviceId);
-      await ref.set({ isPaused: false, deviceId }, { merge: true });
-      return NextResponse.json({ ok: true, trackId });
+      if (party.nowPlaying && !party.isPaused) {
+        return NextResponse.json({
+          ok: true,
+          trackId: party.nowPlaying.id,
+        });
+      }
+
+      const tracks = await getQueueTracks(partyId);
+      const next = nextQueueTrack(tracks);
+      if (!next) {
+        return NextResponse.json({ error: "Queue is empty" }, { status: 400 });
+      }
+
+      await startPlayback(accessToken, deviceId, [next.uri]);
+      await promoteTrackToNowPlaying({ ref, track: next, deviceId });
+      return NextResponse.json({ ok: true, trackId: next.id });
     }
 
     if (body.action === "skip") {
-      const tracks = await getSortedTracks(partyId);
-      const currentId = party.nowPlayingTrackId;
-      const remaining = tracks.filter((t) => t.id !== currentId);
-      const next = remaining[0];
+      const tracks = await getQueueTracks(partyId);
+      const next = nextQueueTrack(tracks);
 
-      const batch = getAdminDb().batch();
-      if (currentId) {
-        batch.delete(ref.collection("tracks").doc(currentId));
-        const votes = await ref
-          .collection("votes")
-          .where("trackId", "==", currentId)
+      // Clear previous now-playing votes if any leftover track docs exist.
+      if (party.nowPlayingTrackId) {
+        const leftover = await ref
+          .collection("tracks")
+          .doc(party.nowPlayingTrackId)
           .get();
-        votes.docs.forEach((doc) => batch.delete(doc.ref));
+        if (leftover.exists) {
+          const batch = getAdminDb().batch();
+          await deleteTrackAndVotes(ref, party.nowPlayingTrackId, batch);
+          await batch.commit();
+        }
       }
 
       if (next) {
         await startPlayback(accessToken, deviceId, [next.uri]);
-        remaining.forEach((t) => {
-          batch.set(
-            ref.collection("tracks").doc(t.id),
-            { isPlaying: t.id === next.id },
-            { merge: true },
-          );
-        });
-        batch.set(
-          ref,
-          {
-            nowPlayingTrackId: next.id,
-            isPaused: false,
-            deviceId,
-          },
-          { merge: true },
-        );
-      } else {
-        await pausePlayback(accessToken, deviceId).catch(() => undefined);
-        batch.set(
-          ref,
-          {
-            nowPlayingTrackId: null,
-            isPaused: true,
-            deviceId,
-          },
-          { merge: true },
-        );
+        await promoteTrackToNowPlaying({ ref, track: next, deviceId });
+        return NextResponse.json({ ok: true, trackId: next.id });
       }
-      await batch.commit();
-      return NextResponse.json({ ok: true, trackId: next?.id ?? null });
+
+      await pausePlayback(accessToken, deviceId).catch(() => undefined);
+      await ref.set(
+        {
+          nowPlayingTrackId: null,
+          nowPlaying: null,
+          isPaused: true,
+          deviceId,
+          playbackPositionMs: 0,
+          playbackUpdatedAt: Date.now(),
+          playbackStartedAt: null,
+        },
+        { merge: true },
+      );
+      return NextResponse.json({ ok: true, trackId: null });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

@@ -4,6 +4,9 @@ export const SPOTIFY_SCOPES = [
   "streaming",
   "user-read-playback-state",
   "user-modify-playback-state",
+  "user-library-read",
+  "playlist-read-private",
+  "playlist-read-collaborative",
 ].join(" ");
 
 export const SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize";

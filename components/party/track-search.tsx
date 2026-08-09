@@ -7,18 +7,53 @@ import { useEffect, useState } from "react";
 type Props = {
   partyId: string;
   onAdd: (track: SpotifySearchTrack) => Promise<void>;
+  /** Guest Firebase token getter — required for likes when not host session */
+  getIdToken?: () => Promise<string>;
+  /** Guest id for Spotify link OAuth */
+  guestId?: string | null;
+  spotifyLinked?: boolean;
+  returnTo?: string;
+  /** Fired when the guest is actively searching or browsing likes. */
+  onSearchingChange?: (searching: boolean) => void;
 };
 
-export function TrackSearch({ partyId, onAdd }: Props) {
+type Tab = "search" | "likes";
+
+export function TrackSearch({
+  partyId,
+  onAdd,
+  getIdToken,
+  guestId,
+  spotifyLinked,
+  returnTo,
+  onSearchingChange,
+}: Props) {
+  const [tab, setTab] = useState<Tab>("search");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SpotifySearchTrack[]>([]);
+  const [likes, setLikes] = useState<SpotifySearchTrack[]>([]);
+  const [likesOffset, setLikesOffset] = useState(0);
+  const [likesTotal, setLikesTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [needsSpotify, setNeedsSpotify] = useState(false);
+
+  useEffect(() => {
+    const searching =
+      (tab === "search" && query.trim().length >= 2) || tab === "likes";
+    onSearchingChange?.(searching);
+  }, [tab, query, onSearchingChange]);
+
+  useEffect(() => {
+    return () => {
+      onSearchingChange?.(false);
+    };
+  }, [onSearchingChange]);
 
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) {
+    if (tab !== "search" || q.length < 2) {
       return;
     }
     const handle = window.setTimeout(async () => {
@@ -41,29 +76,128 @@ export function TrackSearch({ partyId, onAdd }: Props) {
       }
     }, 300);
     return () => window.clearTimeout(handle);
-  }, [query, partyId]);
+  }, [query, partyId, tab]);
 
-  const visibleResults = query.trim().length < 2 ? [] : results;
+  useEffect(() => {
+    if (tab !== "likes") return;
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      setNeedsSpotify(false);
+      try {
+        const headers: HeadersInit = {};
+        if (getIdToken) {
+          headers.Authorization = `Bearer ${await getIdToken()}`;
+        }
+        const res = await fetch(
+          `/api/parties/${partyId}/likes?limit=20&offset=${likesOffset}`,
+          { headers },
+        );
+        const data = (await res.json()) as {
+          tracks?: SpotifySearchTrack[];
+          total?: number;
+          error?: string;
+          needsSpotify?: boolean;
+        };
+        if (res.status === 401 && data.needsSpotify) {
+          setNeedsSpotify(true);
+          setLikes([]);
+          return;
+        }
+        if (!res.ok) throw new Error(data.error || "Could not load likes");
+        if (cancelled) return;
+        setLikes(data.tracks ?? []);
+        setLikesTotal(data.total ?? 0);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load likes");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, partyId, likesOffset, getIdToken, spotifyLinked]);
+
+  const visibleResults =
+    tab === "search" ? (query.trim().length < 2 ? [] : results) : likes;
+
+  const linkHref =
+    guestId && returnTo
+      ? `/api/auth/spotify?intent=guest-link&partyId=${encodeURIComponent(partyId)}&guestId=${encodeURIComponent(guestId)}&returnTo=${encodeURIComponent(returnTo)}`
+      : `/api/auth/spotify?intent=host&returnTo=${encodeURIComponent(returnTo || "/")}`;
 
   return (
     <div className="flex flex-col gap-3">
-      <label className="sr-only" htmlFor="track-search">
-        Search tracks
-      </label>
-      <input
-        id="track-search"
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          if (e.target.value.trim().length < 2) {
-            setResults([]);
-          }
-        }}
-        placeholder="Search Spotify tracks…"
-        className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white placeholder:text-white/40 outline-none ring-emerald-400/40 focus:ring-2"
-      />
-      {loading && <p className="text-sm text-white/50">Searching…</p>}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setTab("search")}
+          className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${
+            tab === "search"
+              ? "bg-emerald-400 text-emerald-950"
+              : "bg-white/10 text-white"
+          }`}
+        >
+          Search
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setTab("likes");
+            setLikesOffset(0);
+          }}
+          className={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${
+            tab === "likes"
+              ? "bg-emerald-400 text-emerald-950"
+              : "bg-white/10 text-white"
+          }`}
+        >
+          Liked songs
+        </button>
+      </div>
+
+      {tab === "search" && (
+        <>
+          <label className="sr-only" htmlFor="track-search">
+            Search tracks
+          </label>
+          <input
+            id="track-search"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (e.target.value.trim().length < 2) {
+                setResults([]);
+              }
+            }}
+            placeholder="Search Spotify tracks…"
+            className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white placeholder:text-white/40 outline-none ring-emerald-400/40 focus:ring-2"
+          />
+        </>
+      )}
+
+      {tab === "likes" && needsSpotify && (
+        <div className="rounded-xl border border-white/15 bg-black/20 p-4 text-sm text-white/70">
+          <p className="mb-3">
+            Link Spotify to browse your liked songs and add them to the queue.
+          </p>
+          <a
+            href={linkHref}
+            className="inline-flex rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-emerald-950"
+          >
+            Connect Spotify
+          </a>
+        </div>
+      )}
+
+      {loading && <p className="text-sm text-white/50">Loading…</p>}
       {error && <p className="text-sm text-red-300">{error}</p>}
+
       <ul className="flex max-h-72 flex-col gap-2 overflow-y-auto">
         {visibleResults.map((track) => (
           <li
@@ -95,8 +229,10 @@ export function TrackSearch({ partyId, onAdd }: Props) {
                 setAddingId(track.id);
                 try {
                   await onAdd(track);
-                  setQuery("");
-                  setResults([]);
+                  if (tab === "search") {
+                    setQuery("");
+                    setResults([]);
+                  }
                 } finally {
                   setAddingId(null);
                 }
@@ -108,6 +244,27 @@ export function TrackSearch({ partyId, onAdd }: Props) {
           </li>
         ))}
       </ul>
+
+      {tab === "likes" && !needsSpotify && likesTotal > 20 && (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={likesOffset <= 0}
+            onClick={() => setLikesOffset((o) => Math.max(0, o - 20))}
+            className="flex-1 rounded-xl border border-white/15 px-3 py-2 text-sm text-white disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            disabled={likesOffset + 20 >= likesTotal}
+            onClick={() => setLikesOffset((o) => o + 20)}
+            className="flex-1 rounded-xl border border-white/15 px-3 py-2 text-sm text-white disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 }

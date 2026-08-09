@@ -9,12 +9,19 @@ declare global {
   }
 }
 
+const SKIP_COOLDOWN_MS = 2_500;
+
 export function useSpotifyPlayer(enabled: boolean, partyId: string) {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("idle");
+  const [positionMs, setPositionMs] = useState(0);
   const playerRef = useRef<Spotify.Player | null>(null);
+  const skipLockRef = useRef(false);
+  const lastSkipAtRef = useRef(0);
+  const registeredDeviceRef = useRef<string | null>(null);
+  const lastSdkPositionRef = useRef({ position: 0, at: 0, paused: true });
 
   const getOAuthToken = useCallback((cb: (token: string) => void) => {
     void (async () => {
@@ -46,6 +53,7 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
     let cancelled = false;
     let player: Spotify.Player | null = null;
     let becameReady = false;
+    let localTick: number | undefined;
     const timeout = window.setTimeout(() => {
       if (cancelled || becameReady) return;
       setError(
@@ -75,6 +83,8 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
           setReady(true);
           setStatus("ready");
           setError(null);
+          if (registeredDeviceRef.current === device_id) return;
+          registeredDeviceRef.current = device_id;
           void fetch(`/api/parties/${partyId}/control`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -118,15 +128,33 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
 
         player.addListener("player_state_changed", (state) => {
           if (!state || cancelled) return;
+          lastSdkPositionRef.current = {
+            position: state.position,
+            at: performance.now(),
+            paused: state.paused,
+          };
+          setPositionMs(state.position);
+
           const ended =
             state.paused &&
             state.position === 0 &&
             state.track_window.previous_tracks.length > 0;
           if (!ended) return;
+
+          const now = Date.now();
+          if (skipLockRef.current) return;
+          if (now - lastSkipAtRef.current < SKIP_COOLDOWN_MS) return;
+
+          skipLockRef.current = true;
+          lastSkipAtRef.current = now;
           void fetch(`/api/parties/${partyId}/control`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "skip" }),
+          }).finally(() => {
+            window.setTimeout(() => {
+              skipLockRef.current = false;
+            }, SKIP_COOLDOWN_MS);
           });
         });
 
@@ -136,7 +164,17 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
           window.clearTimeout(timeout);
           setError("Could not connect Spotify player");
           setStatus("connect_failed");
+          return;
         }
+
+        // Smooth local progress only — never hits the network.
+        localTick = window.setInterval(() => {
+          const snap = lastSdkPositionRef.current;
+          if (snap.paused) return;
+          setPositionMs(
+            snap.position + Math.max(0, performance.now() - snap.at),
+          );
+        }, 250);
       } catch (err) {
         if (cancelled) return;
         window.clearTimeout(timeout);
@@ -150,10 +188,12 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
     return () => {
       cancelled = true;
       window.clearTimeout(timeout);
+      if (localTick) window.clearInterval(localTick);
+      registeredDeviceRef.current = null;
       player?.disconnect();
       playerRef.current = null;
     };
   }, [enabled, partyId, getOAuthToken]);
 
-  return { deviceId, ready, error, status };
+  return { deviceId, ready, error, status, positionMs };
 }

@@ -1,20 +1,20 @@
 "use client";
 
 import { getClientDb, isFirebaseConfigured } from "@/lib/firebase/client";
-import type { Party, PartyTrack } from "@/lib/types/party";
 import {
-  collection,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-} from "firebase/firestore";
+  normalizeParty,
+  normalizeTrack,
+  sortPartyQueue,
+} from "@/lib/party/queue";
+import type { Party, PartyGuest, PartyTrack } from "@/lib/types/party";
+import { collection, doc, onSnapshot } from "firebase/firestore";
 import { useEffect, useMemo, useState } from "react";
 
 export function usePartyRealtime(partyId: string | null) {
   const configured = isFirebaseConfigured();
   const [party, setParty] = useState<Party | null>(null);
   const [tracks, setTracks] = useState<PartyTrack[]>([]);
+  const [guests, setGuests] = useState<PartyGuest[]>([]);
   const [error, setError] = useState<string | null>(
     configured ? null : "Firebase is not configured",
   );
@@ -30,20 +30,35 @@ export function usePartyRealtime(partyId: string | null) {
           setParty(null);
           return;
         }
-        setParty(snap.data() as Party);
+        setParty(normalizeParty(snap.data() as Party));
       },
       (err) => setError(err.message),
     );
 
-    const tracksQuery = query(
-      collection(db, "parties", partyId, "tracks"),
-      orderBy("voteCount", "desc"),
-      orderBy("addedAt", "asc"),
-    );
     const unsubTracks = onSnapshot(
-      tracksQuery,
+      collection(db, "parties", partyId, "tracks"),
       (snap) => {
-        setTracks(snap.docs.map((d) => d.data() as PartyTrack));
+        setTracks(snap.docs.map((d) => normalizeTrack(d.data() as PartyTrack)));
+      },
+      (err) => setError(err.message),
+    );
+
+    const unsubGuests = onSnapshot(
+      collection(db, "parties", partyId, "guests"),
+      (snap) => {
+        const list = snap.docs.map((d) => {
+          const g = d.data() as PartyGuest;
+          return {
+            ...g,
+            spotifyId: g.spotifyId ?? null,
+            spotifyDisplayName: g.spotifyDisplayName ?? null,
+            isPremium: Boolean(g.isPremium),
+            lastSeenAt: g.lastSeenAt ?? g.joinedAt ?? 0,
+            isSearching: Boolean(g.isSearching),
+          };
+        });
+        list.sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+        setGuests(list);
       },
       (err) => setError(err.message),
     );
@@ -51,16 +66,11 @@ export function usePartyRealtime(partyId: string | null) {
     return () => {
       unsubParty();
       unsubTracks();
+      unsubGuests();
     };
   }, [partyId, configured]);
 
-  const sortedTracks = useMemo(() => {
-    const playingId = party?.nowPlayingTrackId;
-    if (!playingId) return tracks;
-    const playing = tracks.find((t) => t.id === playingId);
-    const rest = tracks.filter((t) => t.id !== playingId);
-    return playing ? [playing, ...rest] : tracks;
-  }, [tracks, party]);
+  const sortedTracks = useMemo(() => sortPartyQueue(tracks), [tracks]);
 
-  return { party, tracks: sortedTracks, error };
+  return { party, tracks: sortedTracks, guests, error };
 }

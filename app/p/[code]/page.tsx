@@ -1,31 +1,66 @@
 "use client";
 
 import { GuestNameGate } from "@/components/party/guest-name-gate";
+import { HostTransferBanner } from "@/components/party/host-transfer-banner";
+import {
+  HowItWorks,
+  markHowItWorksSeen,
+  useHowItWorksDismissed,
+} from "@/components/party/how-it-works";
+import { NowPlayingBar } from "@/components/party/now-playing-bar";
+import { QrCard } from "@/components/party/qr-card";
 import { QueueList } from "@/components/party/queue-list";
 import { TrackSearch } from "@/components/party/track-search";
 import { useGuestAuth } from "@/lib/hooks/use-guest-auth";
+import { useGuestPresence } from "@/lib/hooks/use-guest-presence";
 import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
 import type { Party, SpotifySearchTrack } from "@/lib/types/party";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+const GUEST_HOWTO_KEY = "topspot_guest_howto_v1";
 
 export default function GuestPartyPage() {
   const params = useParams<{ code: string }>();
   const code = (params.code || "").toUpperCase();
-  const { ready, getIdToken, error: authError } = useGuestAuth();
+  const { ready, user, getIdToken, error: authError } = useGuestAuth();
 
+  const howtoSeen = useHowItWorksDismissed(GUEST_HOWTO_KEY);
+  const [howtoJustDismissed, setHowtoJustDismissed] = useState(false);
+  const explained = howtoSeen || howtoJustDismissed;
   const [partyMeta, setPartyMeta] = useState<Party | null>(null);
   const [joined, setJoined] = useState(false);
   const [gateNeeded, setGateNeeded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [myVotes, setMyVotes] = useState<Set<string>>(new Set());
+  const [myVotes, setMyVotes] = useState<Record<string, 1 | -1>>({});
+  const [guestId, setGuestId] = useState<string | null>(null);
+  const [spotifyLinked, setSpotifyLinked] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showQr, setShowQr] = useState(false);
 
   const {
     party,
     tracks,
     error: realtimeError,
   } = usePartyRealtime(joined ? (partyMeta?.id ?? null) : null);
+
+  const joinUrl = useMemo(() => {
+    const partyCode = (party ?? partyMeta)?.code || code;
+    if (!partyCode) return "";
+    const origin =
+      typeof window !== "undefined"
+        ? window.location.origin
+        : process.env.NEXT_PUBLIC_APP_URL || "";
+    return `${origin}/p/${partyCode}`;
+  }, [party, partyMeta, code]);
+
+  useGuestPresence({
+    partyId: joined ? (partyMeta?.id ?? null) : null,
+    enabled: joined && Boolean(guestId),
+    isSearching,
+    getIdToken,
+  });
 
   const joinParty = useCallback(
     async (displayName?: string) => {
@@ -38,27 +73,34 @@ export default function GuestPartyPage() {
         },
         body: JSON.stringify({ displayName }),
       });
-      const data = (await res.json()) as { party?: Party; error?: string };
+      const data = (await res.json()) as {
+        party?: Party;
+        guestId?: string;
+        error?: string;
+      };
       if (!res.ok || !data.party) {
         throw new Error(data.error || "Could not join party");
       }
       setPartyMeta(data.party);
       setJoined(true);
       setGateNeeded(false);
+      if (data.guestId) setGuestId(data.guestId);
 
       const votesRes = await fetch(`/api/parties/${data.party.id}/votes`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (votesRes.ok) {
-        const votes = (await votesRes.json()) as { trackIds: string[] };
-        setMyVotes(new Set(votes.trackIds));
+        const votes = (await votesRes.json()) as {
+          votes?: Record<string, 1 | -1>;
+        };
+        setMyVotes(votes.votes ?? {});
       }
     },
     [code, getIdToken],
   );
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !explained) return;
     let cancelled = false;
 
     async function bootstrap() {
@@ -86,7 +128,26 @@ export default function GuestPartyPage() {
     return () => {
       cancelled = true;
     };
-  }, [ready, code, joinParty]);
+  }, [ready, code, joinParty, explained]);
+
+  useEffect(() => {
+    if (!guestId || !partyMeta?.id) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = await getIdToken();
+        const res = await fetch(`/api/parties/${partyMeta.id}/likes?limit=1`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!cancelled) setSpotifyLinked(res.ok);
+      } catch {
+        if (!cancelled) setSpotifyLinked(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [guestId, partyMeta?.id, getIdToken]);
 
   const authedFetch = useCallback(
     async (url: string, init?: RequestInit) => {
@@ -107,11 +168,11 @@ export default function GuestPartyPage() {
     if (!partyMeta) return;
     const res = await authedFetch(`/api/parties/${partyMeta.id}/tracks`, {
       method: "POST",
-      body: JSON.stringify({ track }),
+      body: JSON.stringify({ track, source: "request" }),
     });
     const data = (await res.json()) as { error?: string };
     if (!res.ok) throw new Error(data.error || "Could not add track");
-    setMyVotes((prev) => new Set(prev).add(track.id));
+    setMyVotes((prev) => ({ ...prev, [track.id]: 1 }));
   }
 
   async function onVote(trackId: string, action: "up" | "down") {
@@ -121,12 +182,28 @@ export default function GuestPartyPage() {
       body: JSON.stringify({ trackId, action }),
     });
     if (!res.ok) return;
+    const data = (await res.json()) as { myVote?: 0 | 1 | -1 };
     setMyVotes((prev) => {
-      const next = new Set(prev);
-      if (action === "up") next.add(trackId);
-      else next.delete(trackId);
+      const next = { ...prev };
+      if (!data.myVote) delete next[trackId];
+      else next[trackId] = data.myVote;
       return next;
     });
+  }
+
+  if (!explained) {
+    return (
+      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-4 py-10">
+        <HowItWorks
+          role="guest"
+          continueLabel={`Join party ${code}`}
+          onContinue={() => {
+            markHowItWorksSeen(GUEST_HOWTO_KEY);
+            setHowtoJustDismissed(true);
+          }}
+        />
+      </main>
+    );
   }
 
   if (loadError || authError) {
@@ -163,47 +240,84 @@ export default function GuestPartyPage() {
   }
 
   const live = party ?? partyMeta;
-  const nowPlaying = tracks.find((t) => t.id === live.nowPlayingTrackId);
 
   return (
-    <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-6 px-4 py-6 pb-16">
-      <header>
-        <Link href="/" className="text-sm text-emerald-300/80">
-          ← Topspot
-        </Link>
-        <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-bold text-white">
-          Party {live.code}
-        </h1>
-        <p className="text-white/55">Hosted by {live.hostDisplayName}</p>
-      </header>
+    <>
+      <main className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-5 px-4 py-6 pb-20">
+        <header className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <Link href="/" className="text-sm text-emerald-300/80">
+              ← Topspot
+            </Link>
+            <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-bold text-white">
+              Party {live.code}
+            </h1>
+            <p className="text-white/55">Hosted by {live.hostDisplayName}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowQr(true)}
+            className="shrink-0 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white"
+          >
+            Invite
+          </button>
+        </header>
 
-      <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-        <p className="text-xs uppercase tracking-[0.2em] text-white/45">
-          Now playing
-        </p>
-        <p className="mt-1 text-xl font-semibold text-white">
-          {nowPlaying?.name ?? "Waiting for the host…"}
-        </p>
-        <p className="text-sm text-white/55">{nowPlaying?.artists ?? ""}</p>
-      </section>
-
-      <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-        <h2 className="mb-3 font-semibold text-white">Add a track</h2>
-        <TrackSearch partyId={live.id} onAdd={onAdd} />
-      </section>
-
-      <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-        <h2 className="mb-3 font-semibold text-white">Queue</h2>
-        {realtimeError && (
-          <p className="mb-2 text-sm text-amber-200">{realtimeError}</p>
-        )}
-        <QueueList
-          tracks={tracks}
-          nowPlayingTrackId={live.nowPlayingTrackId}
-          myVotes={myVotes}
-          onVote={onVote}
+        <HostTransferBanner
+          party={live}
+          guestId={guestId}
+          getIdToken={getIdToken}
         />
-      </section>
-    </main>
+
+        <NowPlayingBar
+          key={`${live.nowPlaying?.id ?? "none"}-${live.playbackUpdatedAt}-${live.isPaused}`}
+          party={live}
+        />
+
+        <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <h2 className="mb-3 font-semibold text-white">Add a track</h2>
+          <TrackSearch
+            partyId={live.id}
+            onAdd={onAdd}
+            getIdToken={getIdToken}
+            guestId={guestId ?? user?.uid ?? null}
+            spotifyLinked={spotifyLinked}
+            returnTo={`/p/${live.code}`}
+            onSearchingChange={setIsSearching}
+          />
+        </section>
+
+        <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <h2 className="mb-3 font-semibold text-white">Queue</h2>
+          {realtimeError && (
+            <p className="mb-2 text-sm text-amber-200">{realtimeError}</p>
+          )}
+          <QueueList
+            tracks={tracks}
+            myVotes={myVotes}
+            downvoteMode={live.downvoteMode ?? "off"}
+            onVote={onVote}
+          />
+        </section>
+      </main>
+
+      {showQr && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4">
+          <div className="w-full max-w-sm rounded-t-3xl border border-white/10 bg-[#0b1520] p-4 sm:rounded-3xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-semibold text-white">Invite guests</h2>
+              <button
+                type="button"
+                onClick={() => setShowQr(false)}
+                className="text-white/60"
+              >
+                Close
+              </button>
+            </div>
+            <QrCard joinUrl={joinUrl} code={live.code} />
+          </div>
+        </div>
+      )}
+    </>
   );
 }

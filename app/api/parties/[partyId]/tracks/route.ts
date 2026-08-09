@@ -1,11 +1,13 @@
 import { isErrorResponse, requireGuestId } from "@/lib/auth/guest";
 import { getHostSession } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { sortPartyQueue } from "@/lib/party/queue";
 import type {
   Party,
   PartyGuest,
   PartyTrack,
   SpotifySearchTrack,
+  TrackSource,
 } from "@/lib/types/party";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -18,11 +20,11 @@ export async function GET(
     .collection("parties")
     .doc(partyId)
     .collection("tracks")
-    .orderBy("voteCount", "desc")
-    .orderBy("addedAt", "asc")
     .get();
 
-  const tracks = snap.docs.map((doc) => doc.data() as PartyTrack);
+  const tracks = sortPartyQueue(
+    snap.docs.map((doc) => doc.data() as PartyTrack),
+  );
   return NextResponse.json({ tracks });
 }
 
@@ -34,8 +36,22 @@ export async function POST(
   if (isErrorResponse(guest)) return guest;
 
   const { partyId } = await context.params;
-  const body = (await request.json()) as { track?: SpotifySearchTrack };
-  if (!body.track?.id || !body.track.uri) {
+  const body = (await request.json()) as {
+    track?: SpotifySearchTrack;
+    tracks?: SpotifySearchTrack[];
+    source?: TrackSource;
+  };
+
+  const source: TrackSource =
+    body.source === "fallback" ? "fallback" : "request";
+
+  const incoming = body.tracks?.length
+    ? body.tracks
+    : body.track
+      ? [body.track]
+      : [];
+
+  if (!incoming.length || incoming.some((t) => !t?.id || !t?.uri)) {
     return NextResponse.json({ error: "Invalid track" }, { status: 400 });
   }
 
@@ -48,6 +64,13 @@ export async function POST(
   const party = partySnap.data() as Party;
   if (!party.isActive) {
     return NextResponse.json({ error: "Party has ended" }, { status: 410 });
+  }
+
+  if (source === "fallback") {
+    const session = await getHostSession();
+    if (!session || session.spotifyId !== party.hostSpotifyId) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const guestSnap = await partyRef
@@ -68,43 +91,86 @@ export async function POST(
     );
   }
 
-  const trackRef = partyRef.collection("tracks").doc(body.track.id);
-  const existing = await trackRef.get();
-  if (existing.exists) {
-    return NextResponse.json({
-      track: existing.data() as PartyTrack,
-      alreadyQueued: true,
-    });
+  const ids = incoming.map((t) => t.id);
+  const existingIds = new Set<string>();
+  if (ids.length > 0) {
+    const existingSnaps = await db.getAll(
+      ...ids.map((id) => partyRef.collection("tracks").doc(id)),
+    );
+    existingSnaps.filter((s) => s.exists).forEach((s) => existingIds.add(s.id));
   }
 
-  const track: PartyTrack = {
-    id: body.track.id,
-    name: body.track.name,
-    artists: body.track.artists,
-    albumName: body.track.albumName,
-    albumArtUrl: body.track.albumArtUrl,
-    durationMs: body.track.durationMs,
-    uri: body.track.uri,
-    voteCount: 1,
-    addedBy: guest.guestId,
-    addedByName: guestData.displayName,
-    addedAt: Date.now(),
-    isPlaying: false,
-  };
+  const added: PartyTrack[] = [];
+  const skipped: string[] = [];
+  const now = Date.now();
+  let batch = db.batch();
+  let ops = 0;
 
-  const batch = db.batch();
-  batch.set(trackRef, track);
-  batch.set(
-    partyRef.collection("votes").doc(`${body.track.id}_${guest.guestId}`),
-    {
-      trackId: body.track.id,
-      guestId: guest.guestId,
-      createdAt: Date.now(),
-    },
-  );
-  await batch.commit();
+  async function flush() {
+    if (ops === 0) return;
+    await batch.commit();
+    batch = db.batch();
+    ops = 0;
+  }
 
-  return NextResponse.json({ track, alreadyQueued: false });
+  for (let i = 0; i < incoming.length; i += 1) {
+    const item = incoming[i];
+    if (
+      existingIds.has(item.id) ||
+      party.nowPlaying?.id === item.id ||
+      party.nowPlayingTrackId === item.id
+    ) {
+      skipped.push(item.id);
+      continue;
+    }
+
+    const track: PartyTrack = {
+      id: item.id,
+      name: item.name,
+      artists: item.artists,
+      albumName: item.albumName,
+      albumArtUrl: item.albumArtUrl,
+      durationMs: item.durationMs,
+      uri: item.uri,
+      source,
+      voteCount: source === "request" ? 1 : 0,
+      upVoteCount: source === "request" ? 1 : 0,
+      downVoteCount: 0,
+      addedBy: guest.guestId,
+      addedByName: guestData.displayName,
+      addedAt: now + i,
+      isPlaying: false,
+    };
+
+    batch.set(partyRef.collection("tracks").doc(item.id), track);
+    ops += 1;
+    if (source === "request") {
+      batch.set(
+        partyRef.collection("votes").doc(`${item.id}_${guest.guestId}`),
+        {
+          trackId: item.id,
+          guestId: guest.guestId,
+          value: 1,
+          createdAt: now,
+        },
+      );
+      ops += 1;
+    }
+    added.push(track);
+    existingIds.add(item.id);
+
+    if (ops >= 400) {
+      await flush();
+    }
+  }
+  await flush();
+
+  return NextResponse.json({
+    tracks: added,
+    track: added[0] ?? null,
+    alreadyQueued: added.length === 0 && skipped.length > 0,
+    skipped,
+  });
 }
 
 export async function DELETE(
@@ -141,10 +207,17 @@ export async function DELETE(
   votes.docs.forEach((doc) => batch.delete(doc.ref));
   batch.delete(partyRef.collection("tracks").doc(trackId));
 
-  if (party.nowPlayingTrackId === trackId) {
+  if (party.nowPlayingTrackId === trackId || party.nowPlaying?.id === trackId) {
     batch.set(
       partyRef,
-      { nowPlayingTrackId: null, isPaused: true },
+      {
+        nowPlayingTrackId: null,
+        nowPlaying: null,
+        isPaused: true,
+        playbackPositionMs: 0,
+        playbackStartedAt: null,
+        playbackUpdatedAt: Date.now(),
+      },
       { merge: true },
     );
   }

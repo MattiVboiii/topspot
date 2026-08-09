@@ -1,8 +1,60 @@
 import { getHostSession } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { generatePartyCode } from "@/lib/party/codes";
+import {
+  getHostActivePartyId,
+  setHostActiveParty,
+} from "@/lib/spotify/host-tokens";
 import type { GuestMode, Party } from "@/lib/types/party";
 import { NextRequest, NextResponse } from "next/server";
+
+export async function GET() {
+  const session = await getHostSession();
+  if (!session) {
+    return NextResponse.json({ authenticated: false, party: null });
+  }
+
+  const activeId = await getHostActivePartyId(session.spotifyId);
+  if (activeId) {
+    const snap = await getAdminDb().collection("parties").doc(activeId).get();
+    if (
+      snap.exists &&
+      (snap.data() as Party).isActive &&
+      (snap.data() as Party).hostSpotifyId === session.spotifyId
+    ) {
+      return NextResponse.json({
+        authenticated: true,
+        displayName: session.displayName,
+        party: snap.data() as Party,
+      });
+    }
+    await setHostActiveParty(session.spotifyId, null);
+  }
+
+  // Backfill: find an active party owned by this Spotify account.
+  const owned = await getAdminDb()
+    .collection("parties")
+    .where("hostSpotifyId", "==", session.spotifyId)
+    .limit(20)
+    .get();
+  const active = owned.docs
+    .map((d) => d.data() as Party)
+    .find((p) => p.isActive);
+  if (active) {
+    await setHostActiveParty(session.spotifyId, active.id);
+    return NextResponse.json({
+      authenticated: true,
+      displayName: session.displayName,
+      party: active,
+    });
+  }
+
+  return NextResponse.json({
+    authenticated: true,
+    displayName: session.displayName,
+    party: null,
+  });
+}
 
 export async function POST(request: NextRequest) {
   const session = await getHostSession();
@@ -11,6 +63,20 @@ export async function POST(request: NextRequest) {
       { error: "Sign in with Spotify first" },
       { status: 401 },
     );
+  }
+
+  const db = getAdminDb();
+
+  // Resume the owner's active party instead of creating another.
+  const existingLookup = await GET();
+  const existingJson = (await existingLookup.json()) as {
+    party?: Party | null;
+  };
+  if (existingJson.party) {
+    return NextResponse.json({
+      party: existingJson.party,
+      resumed: true,
+    });
   }
 
   let guestMode: GuestMode = "anonymous";
@@ -23,7 +89,6 @@ export async function POST(request: NextRequest) {
     // default anonymous
   }
 
-  const db = getAdminDb();
   const partyRef = db.collection("parties").doc();
   let code = generatePartyCode();
   let attempts = 0;
@@ -45,8 +110,19 @@ export async function POST(request: NextRequest) {
     createdAt: now,
     isActive: true,
     nowPlayingTrackId: null,
+    nowPlaying: null,
     isPaused: true,
     deviceId: null,
+    playbackPositionMs: 0,
+    playbackUpdatedAt: now,
+    playbackStartedAt: null,
+    downvoteMode: "off",
+    downvoteThreshold: null,
+    fallbackPlaylistId: null,
+    fallbackPlaylistName: null,
+    playbackSpotifyId: session.spotifyId,
+    playbackGuestId: null,
+    pendingPlaybackGuestId: null,
   };
 
   const batch = db.batch();
@@ -55,7 +131,12 @@ export async function POST(request: NextRequest) {
     partyId: partyRef.id,
     createdAt: now,
   });
+  batch.set(
+    db.collection("hosts").doc(session.spotifyId),
+    { activePartyId: partyRef.id, updatedAt: now },
+    { merge: true },
+  );
   await batch.commit();
 
-  return NextResponse.json({ party });
+  return NextResponse.json({ party, resumed: false });
 }
