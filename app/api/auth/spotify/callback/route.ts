@@ -1,5 +1,5 @@
 import { getAppUrl, safeReturnPath } from "@/lib/app-url";
-import { setHostSessionCookie } from "@/lib/auth/session";
+import { attachHostSessionCookie } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { exchangeCodeForTokens, fetchSpotifyProfile } from "@/lib/spotify/api";
 import { getSpotifyRedirectUri } from "@/lib/spotify/config";
@@ -21,6 +21,13 @@ function resolveRedirect(
   return `${appUrl}${safeReturnPath(returnTo, fallback)}`;
 }
 
+function redirectResponse(url: string) {
+  const response = NextResponse.redirect(url);
+  response.cookies.delete("spotify_oauth_state");
+  response.cookies.delete("spotify_oauth_intent");
+  return response;
+}
+
 export async function GET(request: NextRequest) {
   const appUrl = getAppUrl();
   const { searchParams } = request.nextUrl;
@@ -36,19 +43,12 @@ export async function GET(request: NextRequest) {
     intent = { intent: "host" };
   }
 
-  function finish(url: string) {
-    const response = NextResponse.redirect(url);
-    response.cookies.delete("spotify_oauth_state");
-    response.cookies.delete("spotify_oauth_intent");
-    return response;
-  }
-
   if (error) {
-    return finish(`${appUrl}/?error=${encodeURIComponent(error)}`);
+    return redirectResponse(`${appUrl}/?error=${encodeURIComponent(error)}`);
   }
 
   if (!code || !state || !storedState || state !== storedState) {
-    return finish(
+    return redirectResponse(
       `${appUrl}/?error=${encodeURIComponent("Invalid OAuth state")}`,
     );
   }
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
     const isPremium = profile.product === "premium";
 
     if (!tokens.refresh_token) {
-      return finish(
+      return redirectResponse(
         `${appUrl}/?error=${encodeURIComponent("Missing refresh token — revoke app access and try again")}`,
       );
     }
@@ -91,30 +91,35 @@ export async function GET(request: NextRequest) {
           );
       }
 
+      const response = redirectResponse(
+        resolveRedirect(appUrl, intent.returnTo, "/"),
+      );
       if (isPremium) {
-        await setHostSessionCookie({
+        await attachHostSessionCookie(response, {
           spotifyId: profile.id,
           displayName: profile.display_name || profile.id,
         });
       }
-
-      return finish(resolveRedirect(appUrl, intent.returnTo, "/"));
+      return response;
     }
 
     if (!isPremium) {
-      return finish(
+      return redirectResponse(
         `${appUrl}/?error=${encodeURIComponent("Spotify Premium is required to host a party")}`,
       );
     }
 
-    await setHostSessionCookie({
+    const response = redirectResponse(
+      resolveRedirect(appUrl, intent.returnTo, "/host/new"),
+    );
+    await attachHostSessionCookie(response, {
       spotifyId: profile.id,
       displayName: profile.display_name || profile.id,
     });
-
-    return finish(resolveRedirect(appUrl, intent.returnTo, "/host/new"));
+    return response;
   } catch (err) {
     const message = err instanceof Error ? err.message : "OAuth failed";
-    return finish(`${appUrl}/?error=${encodeURIComponent(message)}`);
+    console.error("[spotify/callback]", message);
+    return redirectResponse(`${appUrl}/?error=${encodeURIComponent(message)}`);
   }
 }

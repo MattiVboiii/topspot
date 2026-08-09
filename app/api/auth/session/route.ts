@@ -14,6 +14,7 @@ export async function GET() {
 }
 
 export async function DELETE() {
-  await clearHostSessionCookie();
-  return NextResponse.json({ ok: true });
+  const response = NextResponse.json({ ok: true });
+  await clearHostSessionCookie(response);
+  return response;
 }
