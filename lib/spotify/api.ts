@@ -109,6 +109,35 @@ export function mapTrack(track: SpotifyApiTrack): SpotifySearchTrack {
   };
 }
 
+export type SpotifyPlaybackSnapshot = {
+  deviceId: string | null;
+  deviceName: string | null;
+  isPlaying: boolean;
+};
+
+/** Current Spotify player state, or null when nothing is active (204). */
+export async function getPlaybackState(
+  accessToken: string,
+): Promise<SpotifyPlaybackSnapshot | null> {
+  const res = await fetch(`${SPOTIFY_API_BASE}/me/player`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 204) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Get playback state failed: ${text}`);
+  }
+  const data = (await res.json()) as {
+    is_playing?: boolean;
+    device?: { id?: string | null; name?: string | null } | null;
+  };
+  return {
+    deviceId: data.device?.id ?? null,
+    deviceName: data.device?.name ?? null,
+    isPlaying: Boolean(data.is_playing),
+  };
+}
+
 export async function transferPlayback(
   accessToken: string,
   deviceId: string,

@@ -56,7 +56,7 @@ function HomeContent() {
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-5 py-12 sm:max-w-5xl sm:px-6 sm:py-16">
       <p className="mb-3 text-sm font-semibold uppercase tracking-[0.25em] text-emerald-300/90">
-        Topspot
+        TopSpot
       </p>
       <h1 className="max-w-2xl font-[family-name:var(--font-display)] text-4xl font-extrabold leading-tight text-white sm:text-6xl">
         Let the room pick the music.

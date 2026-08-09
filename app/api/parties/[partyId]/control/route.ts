@@ -3,6 +3,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { isPlaybackController } from "@/lib/party/ownership";
 import { nextQueueTrack, toNowPlayingSnapshot } from "@/lib/party/queue";
 import {
+  getPlaybackState,
   pausePlayback,
   resumePlayback,
   startPlayback,
@@ -76,6 +77,7 @@ async function promoteTrackToNowPlaying(opts: {
       playbackPositionMs: opts.positionMs ?? 0,
       playbackUpdatedAt: now,
       playbackStartedAt: now,
+      lastActivityAt: now,
     },
     { merge: true },
   );
@@ -101,7 +103,13 @@ export async function POST(
   };
 
   const body = (await request.json()) as {
-    action?: "play" | "pause" | "skip" | "register-device";
+    action?:
+      | "play"
+      | "pause"
+      | "skip"
+      | "register-device"
+      | "device-status"
+      | "link-device";
     deviceId?: string;
     positionMs?: number;
   };
@@ -109,30 +117,72 @@ export async function POST(
   try {
     const accessToken = await getHostAccessToken(session.spotifyId);
 
-    if (body.action === "register-device") {
+    if (body.action === "device-status") {
       if (!body.deviceId) {
         return NextResponse.json(
           { error: "deviceId required" },
           { status: 400 },
         );
       }
-      if (party.deviceId === body.deviceId) {
-        return NextResponse.json({ ok: true, deviceId: body.deviceId });
-      }
-      await ref.set({ deviceId: body.deviceId }, { merge: true });
-      await transferPlayback(accessToken, body.deviceId, false);
+      const playback = await getPlaybackState(accessToken);
+      const activeDeviceId = playback?.deviceId ?? null;
+      const linked = Boolean(
+        activeDeviceId && activeDeviceId === body.deviceId,
+      );
+      return NextResponse.json({
+        ok: true,
+        linked,
+        browserDeviceId: body.deviceId,
+        activeDeviceId,
+        activeDeviceName: playback?.deviceName ?? null,
+        isPlaying: playback?.isPlaying ?? false,
+        partyDeviceId: party.deviceId,
+      });
+    }
 
-      // After host handoff, resume current track on the new device if needed.
-      if (party.nowPlaying && !party.isPaused) {
-        await startPlayback(
-          accessToken,
-          body.deviceId,
-          [party.nowPlaying.uri],
-          party.playbackPositionMs || 0,
+    async function linkBrowserDevice(deviceId: string, force: boolean) {
+      const alreadyStored = party.deviceId === deviceId;
+      if (!alreadyStored || force) {
+        await ref.set(
+          { deviceId, lastActivityAt: Date.now() },
+          { merge: true },
         );
       }
 
-      return NextResponse.json({ ok: true, deviceId: body.deviceId });
+      // Always transfer when forcing (user clicked Relink). On first register,
+      // skip only if Spotify already has this browser as the active device.
+      const playback = await getPlaybackState(accessToken);
+      const alreadyActive = playback?.deviceId === deviceId;
+      if (force || !alreadyActive) {
+        await transferPlayback(accessToken, deviceId, false);
+        if (party.nowPlaying && !party.isPaused) {
+          await startPlayback(
+            accessToken,
+            deviceId,
+            [party.nowPlaying.uri],
+            party.playbackPositionMs || 0,
+          );
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        deviceId,
+        linked: true,
+      });
+    }
+
+    if (body.action === "register-device" || body.action === "link-device") {
+      if (!body.deviceId) {
+        return NextResponse.json(
+          { error: "deviceId required" },
+          { status: 400 },
+        );
+      }
+      return await linkBrowserDevice(
+        body.deviceId,
+        body.action === "link-device",
+      );
     }
 
     const deviceId = body.deviceId || party.deviceId;
@@ -157,6 +207,7 @@ export async function POST(
           isPaused: true,
           playbackPositionMs: position,
           playbackUpdatedAt: Date.now(),
+          lastActivityAt: Date.now(),
         },
         { merge: true },
       );
@@ -171,6 +222,7 @@ export async function POST(
             isPaused: false,
             deviceId,
             playbackUpdatedAt: Date.now(),
+            lastActivityAt: Date.now(),
             // Keep frozen pause position as the resume baseline for guests.
             playbackPositionMs: party.playbackPositionMs || 0,
           },
@@ -233,6 +285,7 @@ export async function POST(
           playbackPositionMs: 0,
           playbackUpdatedAt: Date.now(),
           playbackStartedAt: null,
+          lastActivityAt: Date.now(),
         },
         { merge: true },
       );

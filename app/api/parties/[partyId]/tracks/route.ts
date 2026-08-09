@@ -1,6 +1,7 @@
 import { isErrorResponse, requireGuestId } from "@/lib/auth/guest";
 import { getHostSession } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { touchPartyActivity } from "@/lib/party/inactivity";
 import { sortPartyQueue } from "@/lib/party/queue";
 import type {
   Party,
@@ -165,6 +166,10 @@ export async function POST(
   }
   await flush();
 
+  if (added.length > 0) {
+    await touchPartyActivity(partyId, now);
+  }
+
   return NextResponse.json({
     tracks: added,
     track: added[0] ?? null,
@@ -204,6 +209,7 @@ export async function DELETE(
     .where("trackId", "==", trackId)
     .get();
   const batch = db.batch();
+  const now = Date.now();
   votes.docs.forEach((doc) => batch.delete(doc.ref));
   batch.delete(partyRef.collection("tracks").doc(trackId));
 
@@ -216,10 +222,13 @@ export async function DELETE(
         isPaused: true,
         playbackPositionMs: 0,
         playbackStartedAt: null,
-        playbackUpdatedAt: Date.now(),
+        playbackUpdatedAt: now,
+        lastActivityAt: now,
       },
       { merge: true },
     );
+  } else {
+    batch.set(partyRef, { lastActivityAt: now }, { merge: true });
   }
   await batch.commit();
 

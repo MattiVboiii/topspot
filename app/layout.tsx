@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Topspot — Party Jukebox",
+  title: "TopSpot — Party Jukebox",
   description: "Democratic Spotify party queue. Guests vote, the host plays.",
 };
 

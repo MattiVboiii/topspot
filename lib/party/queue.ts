@@ -114,6 +114,7 @@ export function normalizeParty(raw: Party): Party {
     fallbackPlaylistName: raw.fallbackPlaylistName ?? null,
     playbackSpotifyId: raw.playbackSpotifyId || raw.hostSpotifyId,
     playbackGuestId: raw.playbackGuestId ?? null,
+    lastActivityAt: raw.lastActivityAt ?? raw.createdAt,
     pendingPlaybackGuestId:
       raw.pendingPlaybackGuestId ??
       // legacy field from earlier handoff model

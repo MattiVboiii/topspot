@@ -28,6 +28,8 @@ export type Party = {
   hostDisplayName: string;
   guestMode: GuestMode;
   createdAt: number;
+  /** Bumped on join, queue, votes, playback control, and settings changes. */
+  lastActivityAt: number;
   isActive: boolean;
   nowPlayingTrackId: string | null;
   nowPlaying: NowPlayingSnapshot | null;

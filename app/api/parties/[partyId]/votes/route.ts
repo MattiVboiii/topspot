@@ -1,5 +1,6 @@
 import { isErrorResponse, requireGuestId } from "@/lib/auth/guest";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { touchPartyActivity } from "@/lib/party/inactivity";
 import {
   downvotesEnabled,
   netVoteCount,
@@ -134,6 +135,8 @@ export async function POST(
   }
 
   await batch.commit();
+
+  await touchPartyActivity(partyId);
 
   if (shouldRemove) {
     return NextResponse.json({

@@ -69,7 +69,7 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
 
       try {
         player = new window.Spotify.Player({
-          name: "Topspot Party Player",
+          name: "TopSpot Party Player",
           getOAuthToken,
           volume: 0.8,
         });

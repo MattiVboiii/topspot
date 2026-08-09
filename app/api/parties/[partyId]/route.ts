@@ -1,5 +1,6 @@
 import { getHostSession } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
+import { ensurePartyFresh } from "@/lib/party/inactivity";
 import { isPartyOwner } from "@/lib/party/ownership";
 import { setHostActiveParty } from "@/lib/spotify/host-tokens";
 import type { DownvoteMode, GuestMode, Party } from "@/lib/types/party";
@@ -21,7 +22,8 @@ export async function GET(
   if (!snap.exists) {
     return NextResponse.json({ error: "Party not found" }, { status: 404 });
   }
-  return NextResponse.json({ party: snap.data() as Party });
+  const party = await ensurePartyFresh(snap.data() as Party);
+  return NextResponse.json({ party });
 }
 
 export async function PATCH(
@@ -81,6 +83,10 @@ export async function PATCH(
   }
   if (body.fallbackPlaylistName !== undefined) {
     updates.fallbackPlaylistName = body.fallbackPlaylistName;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    updates.lastActivityAt = Date.now();
   }
 
   await ref.set(updates, { merge: true });

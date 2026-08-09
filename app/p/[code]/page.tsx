@@ -221,7 +221,7 @@ export default function GuestPartyPage() {
     return (
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-6 py-12">
         <Link href="/" className="mb-6 text-sm text-emerald-300/80">
-          ← Topspot
+          ← TopSpot
         </Link>
         <p className="mb-2 text-sm uppercase tracking-[0.25em] text-white/50">
           Party {code}
@@ -247,7 +247,7 @@ export default function GuestPartyPage() {
         <header className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <Link href="/" className="text-sm text-emerald-300/80">
-              ← Topspot
+              ← TopSpot
             </Link>
             <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-bold text-white">
               Party {live.code}

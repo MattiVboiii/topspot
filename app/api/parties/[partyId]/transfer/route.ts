@@ -94,6 +94,7 @@ export async function POST(
         deviceId: null,
         isPaused: true,
         playbackUpdatedAt: Date.now(),
+        lastActivityAt: Date.now(),
       },
       { merge: true },
     );
@@ -124,6 +125,7 @@ export async function POST(
         deviceId: null,
         isPaused: true,
         playbackUpdatedAt: Date.now(),
+        lastActivityAt: Date.now(),
       },
       { merge: true },
     );
@@ -167,6 +169,7 @@ export async function POST(
     {
       pendingPlaybackGuestId: body.guestId,
       playbackUpdatedAt: Date.now(),
+      lastActivityAt: Date.now(),
     },
     { merge: true },
   );

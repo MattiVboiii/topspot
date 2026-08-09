@@ -1,6 +1,7 @@
 import { getHostSession } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { generatePartyCode } from "@/lib/party/codes";
+import { ensurePartyFresh } from "@/lib/party/inactivity";
 import {
   getHostActivePartyId,
   setHostActiveParty,
@@ -22,10 +23,11 @@ export async function GET() {
       (snap.data() as Party).isActive &&
       (snap.data() as Party).hostSpotifyId === session.spotifyId
     ) {
+      const party = await ensurePartyFresh(snap.data() as Party);
       return NextResponse.json({
         authenticated: true,
         displayName: session.displayName,
-        party: snap.data() as Party,
+        party,
       });
     }
     await setHostActiveParty(session.spotifyId, null);
@@ -41,11 +43,12 @@ export async function GET() {
     .map((d) => d.data() as Party)
     .find((p) => p.isActive);
   if (active) {
-    await setHostActiveParty(session.spotifyId, active.id);
+    const party = await ensurePartyFresh(active);
+    await setHostActiveParty(session.spotifyId, party.id);
     return NextResponse.json({
       authenticated: true,
       displayName: session.displayName,
-      party: active,
+      party,
     });
   }
 
@@ -108,6 +111,7 @@ export async function POST(request: NextRequest) {
     hostDisplayName: session.displayName,
     guestMode,
     createdAt: now,
+    lastActivityAt: now,
     isActive: true,
     nowPlayingTrackId: null,
     nowPlaying: null,

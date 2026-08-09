@@ -1,6 +1,7 @@
 import { isErrorResponse, requireGuestId } from "@/lib/auth/guest";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { normalizePartyCode } from "@/lib/party/codes";
+import { ensurePartyFresh, touchPartyActivity } from "@/lib/party/inactivity";
 import type { Party } from "@/lib/types/party";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -20,7 +21,7 @@ export async function GET(
   if (!partySnap.exists) {
     return NextResponse.json({ error: "Party not found" }, { status: 404 });
   }
-  const party = partySnap.data() as Party;
+  const party = await ensurePartyFresh(partySnap.data() as Party);
   if (!party.isActive) {
     return NextResponse.json({ error: "Party has ended" }, { status: 410 });
   }
@@ -50,7 +51,7 @@ export async function POST(
   if (!partySnap.exists) {
     return NextResponse.json({ error: "Party not found" }, { status: 404 });
   }
-  const party = partySnap.data() as Party;
+  const party = await ensurePartyFresh(partySnap.data() as Party);
   if (!party.isActive) {
     return NextResponse.json({ error: "Party has ended" }, { status: 410 });
   }
@@ -101,6 +102,8 @@ export async function POST(
     },
     { merge: true },
   );
+
+  await touchPartyActivity(partyId, now);
 
   return NextResponse.json({ party, guestId: guest.guestId, displayName });
 }
