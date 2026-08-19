@@ -269,10 +269,12 @@ export default function GuestPartyPage() {
           getIdToken={getIdToken}
         />
 
-        <NowPlayingBar
-          key={`${live.nowPlaying?.id ?? "none"}-${live.playbackUpdatedAt}-${live.isPaused}`}
-          party={live}
-        />
+        <div className="sticky top-0 z-20">
+          <NowPlayingBar
+            key={`${live.nowPlaying?.id ?? "none"}-${live.playbackUpdatedAt}-${live.isPaused}`}
+            party={live}
+          />
+        </div>
 
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <h2 className="mb-3 font-semibold text-white">Add a track</h2>

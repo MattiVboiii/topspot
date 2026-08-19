@@ -1,14 +1,13 @@
 "use client";
 
-import { HostControls } from "@/components/party/host-controls";
+import { HostPlayerBar } from "@/components/party/host-player-bar";
 import { HostSettingsPanel } from "@/components/party/host-settings-panel";
 import {
   HowItWorks,
   markHowItWorksSeen,
   useHowItWorksDismissed,
 } from "@/components/party/how-it-works";
-import { NowPlayingBar } from "@/components/party/now-playing-bar";
-import { QrCard } from "@/components/party/qr-card";
+import { PartyInvitePanel } from "@/components/party/party-invite-panel";
 import { QueueList } from "@/components/party/queue-list";
 import { TrackSearch } from "@/components/party/track-search";
 import { useGuestAuth } from "@/lib/hooks/use-guest-auth";
@@ -17,6 +16,7 @@ import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
 import { useSpotifyPlayer } from "@/lib/hooks/use-spotify-player";
 import { isGuestOnline } from "@/lib/party/queue";
 import type { SpotifySearchTrack } from "@/lib/types/party";
+import { QrCodeIcon, SettingsIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import Script from "next/script";
@@ -583,7 +583,7 @@ export default function HostPartyPage() {
               onClick={() => setShowQr(true)}
               className="rounded-xl border border-white/15 px-3 py-2 text-sm font-semibold text-white"
             >
-              QR
+              <QrCodeIcon className="size-4" />
             </button>
             {isOwner && (
               <button
@@ -591,7 +591,7 @@ export default function HostPartyPage() {
                 onClick={() => setSettingsOpen(true)}
                 className="rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold text-white"
               >
-                Settings
+                <SettingsIcon className="size-4" />
               </button>
             )}
           </div>
@@ -619,15 +619,13 @@ export default function HostPartyPage() {
           </section>
         )}
 
-        <NowPlayingBar
-          key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
-          party={party}
-          livePositionMs={isController && playerReady ? positionMs : null}
-        />
-
-        {isController ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <HostControls
+        <div className="sticky top-0 z-20">
+          {isController ? (
+            <HostPlayerBar
+              key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
+              mode="controller"
+              party={party}
+              livePositionMs={playerReady ? positionMs : null}
               isPaused={party.isPaused || !party.nowPlaying}
               playerReady={playerReady}
               busy={busy}
@@ -642,25 +640,18 @@ export default function HostPartyPage() {
               onCheckDevice={() => void checkDeviceLink({ manual: true })}
               onLinkDevice={() => void linkBrowserDevice()}
               onAutoLinkChange={onAutoLinkChange}
+              error={actionError || playerError}
+              showPlayerHint
             />
-            {(playerError || actionError) && (
-              <p className="mt-3 text-sm text-amber-200">
-                {actionError || playerError}
-              </p>
-            )}
-            {!playerReady && !playerError && (
-              <p className="mt-2 text-xs text-white/45">
-                Use Chrome, Edge, or Firefox. Spotify Premium required. Keep
-                this tab open while music plays.
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
-            Playback controls are on the guest&apos;s device until you take
-            control back.
-          </p>
-        )}
+          ) : (
+            <HostPlayerBar
+              key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
+              mode="readonly"
+              party={party}
+              readonlyMessage="Controls on another device"
+            />
+          )}
+        </div>
 
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <h2 className="mb-3 text-lg font-semibold text-white">Add tracks</h2>
@@ -705,9 +696,9 @@ export default function HostPartyPage() {
       )}
 
       {showQr && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4">
-          <div className="w-full max-w-sm rounded-t-3xl border border-white/10 bg-[#0b1520] p-4 sm:rounded-3xl">
-            <div className="mb-3 flex items-center justify-between">
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 sm:items-center sm:p-4">
+          <div className="flex max-h-[min(92dvh,100%)] w-full max-w-sm flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-[#0b1520] sm:max-h-[min(88dvh,720px)] sm:rounded-3xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
               <h2 className="font-semibold text-white">Invite guests</h2>
               <button
                 type="button"
@@ -717,7 +708,14 @@ export default function HostPartyPage() {
                 Close
               </button>
             </div>
-            <QrCard joinUrl={joinUrl} code={party.code} />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              <PartyInvitePanel
+                joinUrl={joinUrl}
+                code={party.code}
+                hostName={party.hostDisplayName}
+                partyId={partyId}
+              />
+            </div>
           </div>
         </div>
       )}

@@ -38,7 +38,7 @@ export function NowPlayingBar({ party, livePositionMs }: Props) {
 
   if (!nowPlaying) {
     return (
-      <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <section className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 backdrop-blur-xl backdrop-saturate-150">
         <p className="text-xs uppercase tracking-[0.2em] text-white/45">
           Now playing
         </p>
@@ -56,7 +56,7 @@ export function NowPlayingBar({ party, livePositionMs }: Props) {
   const pct = Math.min(100, (displayPosition / duration) * 100);
 
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+    <section className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 backdrop-blur-xl backdrop-saturate-150">
       <div className="flex items-center gap-3">
         {nowPlaying.albumArtUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
