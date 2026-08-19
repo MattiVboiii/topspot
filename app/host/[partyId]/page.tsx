@@ -20,7 +20,14 @@ import type { SpotifySearchTrack } from "@/lib/types/party";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import Script from "next/script";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 const HOST_HOWTO_KEY = "topspot_host_howto_v1";
 const AUTO_LINK_KEY = "topspot_auto_link_device";
@@ -32,7 +39,6 @@ export default function HostPartyPage() {
     "loading",
   );
   const [sessionSpotifyId, setSessionSpotifyId] = useState<string | null>(null);
-  const [sdkReady, setSdkReady] = useState(false);
   const howtoSeen = useHowItWorksDismissed(HOST_HOWTO_KEY);
   const [howtoJustDismissed, setHowtoJustDismissed] = useState(false);
   const showExplainer = !howtoSeen && !howtoJustDismissed;
@@ -55,17 +61,14 @@ export default function HostPartyPage() {
   );
   // Keep SDK enablement stable so progress Firestore ticks don't recreate the player.
   const playerEnabled =
-    authState === "in" &&
-    Boolean(partyId) &&
-    sdkReady &&
-    !showExplainer &&
-    isController;
+    authState === "in" && Boolean(partyId) && !showExplainer && isController;
   const {
     deviceId: browserDeviceId,
     ready: playerReady,
     error: playerError,
     status: playerStatus,
     positionMs,
+    isActiveDevice: sdkActiveDevice,
   } = useSpotifyPlayer(playerEnabled, partyId);
 
   const [myVotes, setMyVotes] = useState<Record<string, 1 | -1>>({});
@@ -87,6 +90,8 @@ export default function HostPartyPage() {
   });
   const linkingRef = useRef(false);
   const autoLinkRef = useRef(false);
+  const prevCanControlDeviceRef = useRef(false);
+  const sdkActiveDeviceRef = useRef(false);
   const partyPausedRef = useRef(true);
   const linkBrowserDeviceRef = useRef<
     (opts?: { silent?: boolean }) => Promise<void>
@@ -95,6 +100,10 @@ export default function HostPartyPage() {
   useEffect(() => {
     autoLinkRef.current = autoLink;
   }, [autoLink]);
+
+  useEffect(() => {
+    sdkActiveDeviceRef.current = sdkActiveDevice;
+  }, [sdkActiveDevice]);
 
   useEffect(() => {
     partyPausedRef.current = Boolean(party?.isPaused || !party?.nowPlaying);
@@ -123,12 +132,7 @@ export default function HostPartyPage() {
     return `${origin}/p/${party.code}`;
   }, [party?.code]);
 
-  useEffect(() => {
-    const markReady = () => {
-      if (window.Spotify) setSdkReady(true);
-    };
-    markReady();
-    window.addEventListener("spotify-sdk-ready", markReady);
+  useLayoutEffect(() => {
     const previous = window.onSpotifyWebPlaybackSDKReady;
     window.onSpotifyWebPlaybackSDKReady = () => {
       try {
@@ -137,11 +141,10 @@ export default function HostPartyPage() {
         // ignore
       }
       window.dispatchEvent(new Event("spotify-sdk-ready"));
-      markReady();
     };
-    return () => {
-      window.removeEventListener("spotify-sdk-ready", markReady);
-    };
+    if (window.Spotify) {
+      window.dispatchEvent(new Event("spotify-sdk-ready"));
+    }
   }, []);
 
   useEffect(() => {
@@ -284,9 +287,13 @@ export default function HostPartyPage() {
           error?: string;
         };
         if (!res.ok) throw new Error(data.error || "Could not check device");
-        const linked = Boolean(data.linked);
+        const linked = Boolean(data.linked) || sdkActiveDeviceRef.current;
         setDeviceLinked(linked);
-        setActiveDeviceName(data.activeDeviceName ?? null);
+        setActiveDeviceName(
+          linked
+            ? (data.activeDeviceName ?? "TopSpot Party Player")
+            : (data.activeDeviceName ?? null),
+        );
 
         // Auto-link only while party playback is active (not paused / no track).
         if (
@@ -355,8 +362,34 @@ export default function HostPartyPage() {
 
   const canControlDevice =
     playerReady && Boolean(browserDeviceId) && isController;
-  const deviceLinkedForUi = canControlDevice ? deviceLinked : null;
-  const activeDeviceNameForUi = canControlDevice ? activeDeviceName : null;
+  const deviceLinkedForUi = canControlDevice
+    ? deviceLinked === true || sdkActiveDevice
+      ? true
+      : deviceLinked
+    : null;
+  const activeDeviceNameForUi = canControlDevice
+    ? deviceLinkedForUi
+      ? (activeDeviceName ?? "TopSpot Party Player")
+      : activeDeviceName
+    : null;
+
+  useEffect(() => {
+    if (
+      !playerReady ||
+      playerStatus === "connecting" ||
+      playerStatus === "loading_sdk"
+    ) {
+      setDeviceLinked(null);
+      setActiveDeviceName(null);
+      prevCanControlDeviceRef.current = false;
+      return;
+    }
+    if (canControlDevice && !prevCanControlDeviceRef.current) {
+      setDeviceLinked(null);
+      setActiveDeviceName(null);
+    }
+    prevCanControlDeviceRef.current = canControlDevice;
+  }, [canControlDevice, playerReady, playerStatus]);
 
   function onAutoLinkChange(enabled: boolean) {
     setAutoLink(enabled);
@@ -522,7 +555,6 @@ export default function HostPartyPage() {
         strategy="afterInteractive"
         onReady={() => {
           if (window.Spotify) {
-            setSdkReady(true);
             window.dispatchEvent(new Event("spotify-sdk-ready"));
           }
         }}
@@ -599,7 +631,7 @@ export default function HostPartyPage() {
               isPaused={party.isPaused || !party.nowPlaying}
               playerReady={playerReady}
               busy={busy}
-              status={sdkReady ? playerStatus : "loading_sdk"}
+              status={playerStatus}
               deviceLinked={deviceLinkedForUi}
               activeDeviceName={activeDeviceNameForUi}
               deviceCheckBusy={deviceCheckBusy}

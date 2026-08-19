@@ -115,6 +115,51 @@ export type SpotifyPlaybackSnapshot = {
   isPlaying: boolean;
 };
 
+export type SpotifyConnectDevice = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  isRestricted: boolean;
+};
+
+/** Available Spotify Connect targets, including the Web Playback SDK device. */
+export async function getPlayerDevices(
+  accessToken: string,
+): Promise<SpotifyConnectDevice[]> {
+  const res = await fetch(`${SPOTIFY_API_BASE}/me/player/devices`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Get player devices failed: ${text}`);
+  }
+  const data = (await res.json()) as {
+    devices?: Array<{
+      id?: string | null;
+      name?: string | null;
+      is_active?: boolean;
+      is_restricted?: boolean;
+    }>;
+  };
+  return (data.devices ?? [])
+    .filter(
+      (
+        device,
+      ): device is {
+        id: string;
+        name?: string | null;
+        is_active?: boolean;
+        is_restricted?: boolean;
+      } => Boolean(device.id),
+    )
+    .map((device) => ({
+      id: device.id,
+      name: device.name ?? "Unknown device",
+      isActive: Boolean(device.is_active),
+      isRestricted: Boolean(device.is_restricted),
+    }));
+}
+
 /** Current Spotify player state, or null when nothing is active (204). */
 export async function getPlaybackState(
   accessToken: string,

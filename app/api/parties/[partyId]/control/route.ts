@@ -4,6 +4,7 @@ import { isPlaybackController } from "@/lib/party/ownership";
 import { nextQueueTrack, toNowPlayingSnapshot } from "@/lib/party/queue";
 import {
   getPlaybackState,
+  getPlayerDevices,
   pausePlayback,
   resumePlayback,
   startPlayback,
@@ -124,17 +125,28 @@ export async function POST(
           { status: 400 },
         );
       }
-      const playback = await getPlaybackState(accessToken);
-      const activeDeviceId = playback?.deviceId ?? null;
+      const [playback, devices] = await Promise.all([
+        getPlaybackState(accessToken),
+        getPlayerDevices(accessToken),
+      ]);
+      const browserDevice = devices.find((d) => d.id === body.deviceId);
+      const activeFromList = devices.find((d) => d.isActive);
+      const activeDeviceId = playback?.deviceId ?? activeFromList?.id ?? null;
       const linked = Boolean(
-        activeDeviceId && activeDeviceId === body.deviceId,
+        browserDevice?.isActive ||
+        (activeDeviceId && activeDeviceId === body.deviceId) ||
+        (party.deviceId === body.deviceId && browserDevice),
       );
       return NextResponse.json({
         ok: true,
         linked,
         browserDeviceId: body.deviceId,
         activeDeviceId,
-        activeDeviceName: playback?.deviceName ?? null,
+        activeDeviceName:
+          playback?.deviceName ??
+          activeFromList?.name ??
+          browserDevice?.name ??
+          null,
         isPlaying: playback?.isPlaying ?? false,
         partyDeviceId: party.deviceId,
       });
@@ -149,19 +161,28 @@ export async function POST(
         );
       }
 
-      // Always transfer when forcing (user clicked Relink). On first register,
-      // skip only if Spotify already has this browser as the active device.
-      const playback = await getPlaybackState(accessToken);
-      const alreadyActive = playback?.deviceId === deviceId;
+      const [playback, devices] = await Promise.all([
+        getPlaybackState(accessToken),
+        getPlayerDevices(accessToken),
+      ]);
+      const browserDevice = devices.find((d) => d.id === deviceId);
+      const alreadyActive =
+        playback?.deviceId === deviceId || Boolean(browserDevice?.isActive);
+
       if (force || !alreadyActive) {
-        await transferPlayback(accessToken, deviceId, false);
-        if (party.nowPlaying && !party.isPaused) {
-          await startPlayback(
-            accessToken,
-            deviceId,
-            [party.nowPlaying.uri],
-            party.playbackPositionMs || 0,
-          );
+        try {
+          await transferPlayback(accessToken, deviceId, false);
+          if (party.nowPlaying && !party.isPaused) {
+            await startPlayback(
+              accessToken,
+              deviceId,
+              [party.nowPlaying.uri],
+              party.playbackPositionMs || 0,
+            );
+          }
+        } catch (err) {
+          // Device may not be in Spotify's list yet; keep stored deviceId anyway.
+          if (!browserDevice) throw err;
         }
       }
 
