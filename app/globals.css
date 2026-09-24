@@ -82,6 +82,67 @@ body {
   }
 }
 
+@keyframes display-vote-bump {
+  0% {
+    transform: scale(1);
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.85);
+  }
+  35% {
+    transform: scale(1.18);
+    background-color: rgba(52, 211, 153, 0.95);
+    color: #022c22;
+  }
+  100% {
+    transform: scale(1);
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.85);
+  }
+}
+
+@keyframes display-row-flash {
+  0% {
+    border-color: rgba(52, 211, 153, 0.55);
+    background-color: rgba(52, 211, 153, 0.14);
+  }
+  100% {
+    border-color: rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+}
+
+@keyframes display-upvote-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(1.5rem) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes display-upvote-toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(1.25rem) scale(0.96);
+  }
+}
+
+@keyframes display-upvote-toast-arrow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
 .display-art-drift {
   animation: display-art-drift 28s ease-in-out infinite alternate;
   will-change: transform;
@@ -116,11 +177,36 @@ body {
   animation: display-fade-up 0.7s ease-out both;
 }
 
+.display-vote-bump {
+  animation: display-vote-bump 0.85s ease-out;
+}
+
+.display-row-flash {
+  animation: display-row-flash 0.9s ease-out;
+}
+
+.display-upvote-toast-in {
+  animation: display-upvote-toast-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.display-upvote-toast-out {
+  animation: display-upvote-toast-out 0.42s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.display-upvote-toast-arrow {
+  animation: display-upvote-toast-arrow 0.7s ease-in-out 2;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .display-art-drift,
   .display-glow-breathe,
   .display-eq-bar,
-  .display-fade-up {
+  .display-fade-up,
+  .display-vote-bump,
+  .display-row-flash,
+  .display-upvote-toast-in,
+  .display-upvote-toast-out,
+  .display-upvote-toast-arrow {
     animation: none;
   }
 }

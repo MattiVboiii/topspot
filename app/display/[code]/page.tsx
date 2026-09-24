@@ -2,7 +2,9 @@
 
 import { LocaleToggle } from "@/components/LocaleToggle";
 import { CoverArt } from "@/components/party/CoverArt";
+import { DisplayUpvoteToasts } from "@/components/party/DisplayUpvoteToasts";
 import { QrCard } from "@/components/party/QrCard";
+import { useDisplayUpvoteFeed } from "@/lib/hooks/use-display-upvote-feed";
 import { usePartyByCode } from "@/lib/hooks/use-party-by-code";
 import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
 import { usePlaybackNow } from "@/lib/hooks/use-playback-now";
@@ -57,7 +59,41 @@ function PlayingEqualizer({ active }: { active: boolean }) {
   );
 }
 
-function UpcomingRow({ tracks }: { tracks: PartyTrack[] }) {
+function VoteBadge({
+  count,
+  bumped,
+  size = "md",
+}: {
+  count: number;
+  bumped?: boolean;
+  size?: "sm" | "md" | "lg";
+}) {
+  const sizeClass =
+    size === "lg"
+      ? "min-w-14 px-3 py-2 text-base"
+      : size === "sm"
+        ? "min-w-10 px-2 py-1 text-xs"
+        : "min-w-11 px-2.5 py-1.5 text-sm";
+
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center gap-1 rounded-xl bg-white/8 font-semibold text-white/85 ${sizeClass} ${
+        bumped ? "display-vote-bump" : ""
+      }`}
+    >
+      <span aria-hidden>▲</span>
+      {count}
+    </span>
+  );
+}
+
+function UpcomingRow({
+  tracks,
+  bumpedIds,
+}: {
+  tracks: PartyTrack[];
+  bumpedIds: ReadonlySet<string>;
+}) {
   const t = useT();
   if (tracks.length === 0) return null;
 
@@ -67,27 +103,36 @@ function UpcomingRow({ tracks }: { tracks: PartyTrack[] }) {
         {t.display.comingUp}
       </p>
       <ul className="mt-3 flex flex-col gap-2">
-        {tracks.map((track, index) => (
-          <li
-            key={track.id}
-            className="flex items-center gap-3 rounded-2xl border border-white/8 bg-white/4 px-3 py-2"
-          >
-            <span className="w-5 shrink-0 text-center font-mono text-sm text-white/35">
-              {index + 1}
-            </span>
-            <CoverArt
-              src={track.albumArtUrl}
-              size={44}
-              className="h-11 w-11 shrink-0 rounded-lg object-cover"
-            />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-base font-medium text-white/90">
-                {track.name}
-              </p>
-              <p className="truncate text-sm text-white/45">{track.artists}</p>
-            </div>
-          </li>
-        ))}
+        {tracks.map((track, index) => {
+          const bumped = bumpedIds.has(track.id);
+          const votes = track.upVoteCount ?? track.voteCount ?? 0;
+          return (
+            <li
+              key={track.id}
+              className={`flex items-center gap-3 rounded-2xl border border-white/8 bg-white/4 px-3 py-2 transition-[border-color,background-color] ${
+                bumped ? "display-row-flash" : ""
+              }`}
+            >
+              <span className="w-5 shrink-0 text-center font-mono text-sm text-white/35">
+                {index + 1}
+              </span>
+              <CoverArt
+                src={track.albumArtUrl}
+                size={44}
+                className="h-11 w-11 shrink-0 rounded-lg object-cover"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-base font-medium text-white/90">
+                  {track.name}
+                </p>
+                <p className="truncate text-sm text-white/45">
+                  {track.artists}
+                </p>
+              </div>
+              <VoteBadge count={votes} bumped={bumped} />
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -106,6 +151,7 @@ export default function DisplayPartyPage() {
     error: realtimeError,
   } = usePartyRealtime(partyMeta?.id ?? null);
   const live = party ?? partyMeta;
+  const { toasts, bumpedIds, dismissToast } = useDisplayUpvoteFeed(tracks);
 
   const joinUrl = useMemo(() => {
     const partyCode = live?.code || code;
@@ -126,10 +172,20 @@ export default function DisplayPartyPage() {
   const isPaused = live?.isPaused ?? true;
   const playbackUpdatedAt = live?.playbackUpdatedAt ?? 0;
   const nowPlayingId = nowPlaying?.id;
+  const nowPlayingTrack = useMemo(
+    () =>
+      nowPlayingId
+        ? (tracks.find((track) => track.id === nowPlayingId) ?? null)
+        : null,
+    [tracks, nowPlayingId],
+  );
   const nowMs = usePlaybackNow({
     active: Boolean(nowPlayingId) && !isPaused,
   });
   const onlineCount = guests.filter((g) => isGuestOnline(g)).length;
+  const nowPlayingVotes =
+    nowPlayingTrack?.upVoteCount ?? nowPlayingTrack?.voteCount ?? 0;
+  const nowPlayingBumped = nowPlayingId ? bumpedIds.has(nowPlayingId) : false;
 
   if (loadError) {
     return (
@@ -258,11 +314,20 @@ export default function DisplayPartyPage() {
                       {isPaused ? ` · ${t.display.paused}` : ""}
                     </span>
                   </div>
-                  <p className="mt-2 truncate text-sm uppercase tracking-[0.2em] text-white/40">
-                    {nowPlaying.source === "fallback"
-                      ? t.display.fallback
-                      : t.display.request}
-                  </p>
+                  <div className="mt-2 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                    <p className="truncate text-sm uppercase tracking-[0.2em] text-white/40">
+                      {nowPlaying.source === "fallback"
+                        ? t.display.fallback
+                        : t.display.request}
+                    </p>
+                    {nowPlayingVotes > 0 ? (
+                      <VoteBadge
+                        count={nowPlayingVotes}
+                        bumped={nowPlayingBumped}
+                        size="sm"
+                      />
+                    ) : null}
+                  </div>
                   <h1 className="mt-2 line-clamp-3 text-balance font-(family-name:--font-display) text-[clamp(1.75rem,4.2vw,3.75rem)] font-bold leading-[1.05] text-white">
                     {nowPlaying.name}
                   </h1>
@@ -284,7 +349,7 @@ export default function DisplayPartyPage() {
                   </div>
 
                   {upNext && upcoming.length <= 1 ? (
-                    <p className="mt-5 truncate text-base text-white/50">
+                    <p className="mt-5 flex flex-wrap items-center justify-center gap-2 truncate text-base text-white/50 sm:justify-start">
                       <span className="uppercase tracking-[0.18em] text-white/35">
                         {t.display.upNext}
                       </span>{" "}
@@ -292,6 +357,11 @@ export default function DisplayPartyPage() {
                         {upNext.name}
                       </span>
                       <span className="text-white/40"> · {upNext.artists}</span>
+                      <VoteBadge
+                        count={upNext.upVoteCount ?? upNext.voteCount ?? 0}
+                        bumped={bumpedIds.has(upNext.id)}
+                        size="sm"
+                      />
                     </p>
                   ) : null}
                 </div>
@@ -312,7 +382,7 @@ export default function DisplayPartyPage() {
 
             {upcoming.length > 1 ? (
               <div className="hidden max-w-xl lg:block">
-                <UpcomingRow tracks={upcoming} />
+                <UpcomingRow tracks={upcoming} bumpedIds={bumpedIds} />
               </div>
             ) : null}
           </section>
@@ -329,12 +399,14 @@ export default function DisplayPartyPage() {
 
             {upcoming.length > 1 ? (
               <div className="lg:hidden">
-                <UpcomingRow tracks={upcoming} />
+                <UpcomingRow tracks={upcoming} bumpedIds={bumpedIds} />
               </div>
             ) : null}
           </aside>
         </div>
       </div>
+
+      <DisplayUpvoteToasts toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
 }

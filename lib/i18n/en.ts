@@ -59,6 +59,8 @@ export const en: Dictionary = {
     ended: "This party has ended",
     viewRecap: "View recap",
     loading: "Loading display…",
+    upvoteToastLabel: "Upvote",
+    upvoteToast: "{song}",
   },
   qr: {
     scanToJoin: "Scan to join",

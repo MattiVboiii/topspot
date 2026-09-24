@@ -59,6 +59,8 @@ export const nl: Dictionary = {
     ended: "Dit feest is afgelopen",
     viewRecap: "Bekijk de recap",
     loading: "Display laden…",
+    upvoteToastLabel: "Upvote",
+    upvoteToast: "{song}",
   },
   qr: {
     scanToJoin: "Scan om mee te doen",

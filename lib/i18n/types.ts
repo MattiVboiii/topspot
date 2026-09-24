@@ -58,6 +58,8 @@ export type Dictionary = {
     ended: string;
     viewRecap: string;
     loading: string;
+    upvoteToastLabel: string;
+    upvoteToast: string;
   };
   qr: {
     scanToJoin: string;
