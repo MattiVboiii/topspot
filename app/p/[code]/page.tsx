@@ -314,7 +314,7 @@ export default function GuestPartyPage() {
           {myNextTrack && <UpNextBanner trackName={myNextTrack.name} />}
           <div className="[&>section]:rounded-none [&>section]:border-0 [&>section]:bg-transparent [&>section]:backdrop-blur-none">
             <NowPlayingBar
-              key={`${live.nowPlaying?.id ?? "none"}-${live.playbackUpdatedAt}-${live.isPaused}`}
+              key={`${live.nowPlaying?.id ?? "none"}-${live.isPaused ? "paused" : "playing"}`}
               party={live}
             />
           </div>

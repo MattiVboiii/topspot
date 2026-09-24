@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const SKIP_COOLDOWN_MS = 2_500;
+const SKIP_COOLDOWN_MS = 8_000;
+/** Ignore end-of-track signals until we've actually been playing for a bit. */
+const MIN_PLAYED_MS_BEFORE_END = 3_000;
 
 function waitForSpotifySdk(timeoutMs = 20_000): Promise<void> {
   if (typeof window !== "undefined" && window.Spotify) {
@@ -29,6 +31,7 @@ const IDLE_PLAYER = {
   error: null as string | null,
   status: "idle",
   positionMs: 0,
+  paused: true,
   isActiveDevice: false,
 };
 
@@ -40,11 +43,13 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("idle");
   const [positionMs, setPositionMs] = useState(0);
+  const [paused, setPaused] = useState(true);
   const [isActiveDevice, setIsActiveDevice] = useState(false);
   const playerRef = useRef<Spotify.Player | null>(null);
   const skipLockRef = useRef(false);
   const lastSkipAtRef = useRef(0);
   const registeredDeviceRef = useRef<string | null>(null);
+  const sawMeaningfulPlayRef = useRef(false);
   const lastSdkPositionRef = useRef({ position: 0, at: 0, paused: true });
 
   if (session !== sessionKey) {
@@ -55,6 +60,7 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
       setError(IDLE_PLAYER.error);
       setStatus(IDLE_PLAYER.status);
       setPositionMs(IDLE_PLAYER.positionMs);
+      setPaused(IDLE_PLAYER.paused);
       setIsActiveDevice(IDLE_PLAYER.isActiveDevice);
     }
   }
@@ -90,6 +96,7 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
     let becameReady = false;
     let localTick: number | undefined;
     let timeout: number | undefined;
+    let focusCleanup: (() => void) | undefined;
 
     async function init() {
       setStatus("loading_sdk");
@@ -97,7 +104,10 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
       setReady(false);
       setDeviceId(null);
       registeredDeviceRef.current = null;
+      sawMeaningfulPlayRef.current = false;
       setIsActiveDevice(false);
+      setPaused(true);
+      setPositionMs(0);
 
       try {
         await waitForSpotifySdk();
@@ -178,15 +188,25 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
         player.addListener("player_state_changed", (state) => {
           if (cancelled) return;
           setIsActiveDevice(Boolean(state?.track_window.current_track));
-          if (!state) return;
+          if (!state) {
+            setPaused(true);
+            return;
+          }
           lastSdkPositionRef.current = {
             position: state.position,
             at: performance.now(),
             paused: state.paused,
           };
           setPositionMs(state.position);
+          setPaused(state.paused);
 
+          if (!state.paused && state.position >= MIN_PLAYED_MS_BEFORE_END) {
+            sawMeaningfulPlayRef.current = true;
+          }
+
+          // Transfer/link often emits paused@0 with previous_tracks — ignore those.
           const ended =
+            sawMeaningfulPlayRef.current &&
             state.paused &&
             state.position === 0 &&
             state.track_window.previous_tracks.length > 0;
@@ -196,6 +216,7 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
           if (skipLockRef.current) return;
           if (now - lastSkipAtRef.current < SKIP_COOLDOWN_MS) return;
 
+          sawMeaningfulPlayRef.current = false;
           skipLockRef.current = true;
           lastSkipAtRef.current = now;
           void fetch(`/api/parties/${sessionKey}/control`, {
@@ -224,6 +245,27 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
             snap.position + Math.max(0, performance.now() - snap.at),
           );
         }, 250);
+
+        const refreshFromSdk = () => {
+          if (document.visibilityState !== "visible") return;
+          void player?.getCurrentState().then((state) => {
+            if (cancelled || !state) return;
+            lastSdkPositionRef.current = {
+              position: state.position,
+              at: performance.now(),
+              paused: state.paused,
+            };
+            setPositionMs(state.position);
+            setPaused(state.paused);
+            setIsActiveDevice(Boolean(state.track_window.current_track));
+          });
+        };
+        document.addEventListener("visibilitychange", refreshFromSdk);
+        window.addEventListener("focus", refreshFromSdk);
+        focusCleanup = () => {
+          document.removeEventListener("visibilitychange", refreshFromSdk);
+          window.removeEventListener("focus", refreshFromSdk);
+        };
       } catch (err) {
         if (cancelled) return;
         if (timeout !== undefined) window.clearTimeout(timeout);
@@ -242,11 +284,20 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
       cancelled = true;
       if (timeout !== undefined) window.clearTimeout(timeout);
       if (localTick) window.clearInterval(localTick);
+      focusCleanup?.();
       registeredDeviceRef.current = null;
       player?.disconnect();
       playerRef.current = null;
     };
   }, [sessionKey, getOAuthToken]);
 
-  return { deviceId, ready, error, status, positionMs, isActiveDevice };
+  return {
+    deviceId,
+    ready,
+    error,
+    status,
+    positionMs,
+    paused,
+    isActiveDevice,
+  };
 }

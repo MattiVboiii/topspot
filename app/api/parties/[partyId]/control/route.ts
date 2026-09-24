@@ -1,7 +1,12 @@
 import { getHostSession } from "@/lib/auth/session";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { isPlaybackController } from "@/lib/party/ownership";
-import { nextQueueTrack, toNowPlayingSnapshot } from "@/lib/party/queue";
+import {
+  nextQueueTrack,
+  resolvePlaybackPosition,
+  shouldWritePlaybackSync,
+  toNowPlayingSnapshot,
+} from "@/lib/party/queue";
 import {
   getPlaybackState,
   getPlayerDevices,
@@ -155,9 +160,11 @@ export async function POST(
       | "skip"
       | "register-device"
       | "device-status"
-      | "link-device";
+      | "link-device"
+      | "sync-playback";
     deviceId?: string;
     positionMs?: number;
+    isPaused?: boolean;
   };
 
   try {
@@ -193,13 +200,108 @@ export async function POST(
           browserDevice?.name ??
           null,
         isPlaying: playback?.isPlaying ?? false,
+        progressMs: playback?.progressMs ?? null,
         partyDeviceId: party.deviceId,
       });
     }
 
-    async function linkBrowserDevice(deviceId: string, force: boolean) {
-      const alreadyStored = party.deviceId === deviceId;
-      if (!alreadyStored || force) {
+    if (body.action === "sync-playback") {
+      if (!party.nowPlaying) {
+        return NextResponse.json({ ok: true, synced: false });
+      }
+
+      let positionMs: number;
+      let isPaused: boolean;
+
+      const hasClientSnapshot =
+        typeof body.positionMs === "number" &&
+        body.positionMs >= 0 &&
+        typeof body.isPaused === "boolean";
+
+      if (hasClientSnapshot) {
+        positionMs = Math.floor(body.positionMs!);
+        isPaused = body.isPaused!;
+      } else {
+        const playback = await getPlaybackState(accessToken);
+        if (!playback) {
+          return NextResponse.json({ ok: true, synced: false });
+        }
+        // Only mirror Spotify when it is on the same track (or unknown).
+        if (
+          playback.trackUri &&
+          party.nowPlaying.uri &&
+          playback.trackUri !== party.nowPlaying.uri
+        ) {
+          return NextResponse.json({ ok: true, synced: false });
+        }
+        positionMs = playback.progressMs;
+        isPaused = !playback.isPlaying;
+      }
+
+      const duration = party.nowPlaying.durationMs;
+      if (typeof duration === "number" && duration > 0) {
+        positionMs = Math.min(duration, Math.max(0, positionMs));
+      }
+
+      const now = Date.now();
+      if (
+        !shouldWritePlaybackSync(
+          party,
+          { positionMs, isPaused },
+          now,
+        )
+      ) {
+        return NextResponse.json({
+          ok: true,
+          synced: false,
+          positionMs,
+          isPaused,
+        });
+      }
+
+      await ref.set(
+        {
+          isPaused,
+          playbackPositionMs: positionMs,
+          playbackUpdatedAt: now,
+        },
+        { merge: true },
+      );
+      return NextResponse.json({
+        ok: true,
+        synced: true,
+        positionMs,
+        isPaused,
+      });
+    }
+
+    if (body.action === "register-device") {
+      if (!body.deviceId) {
+        return NextResponse.json(
+          { error: "deviceId required" },
+          { status: 400 },
+        );
+      }
+      // Only remember the Web Playback device — do not transfer/restart playback.
+      if (party.deviceId !== body.deviceId) {
+        await ref.set({ deviceId: body.deviceId }, { merge: true });
+      }
+      return NextResponse.json({
+        ok: true,
+        deviceId: body.deviceId,
+        linked: false,
+      });
+    }
+
+    if (body.action === "link-device") {
+      if (!body.deviceId) {
+        return NextResponse.json(
+          { error: "deviceId required" },
+          { status: 400 },
+        );
+      }
+      const deviceId = body.deviceId;
+      if (party.deviceId !== deviceId) {
         await ref.set(
           { deviceId, lastActivityAt: Date.now() },
           { merge: true },
@@ -214,10 +316,13 @@ export async function POST(
       const alreadyActive =
         playback?.deviceId === deviceId || Boolean(browserDevice?.isActive);
 
-      if (force || !alreadyActive) {
+      if (!alreadyActive) {
         try {
-          await transferPlayback(accessToken, deviceId, false);
-          if (party.nowPlaying && !party.isPaused) {
+          // Prefer transfer (keeps Spotify's playback state) over startPlayback,
+          // which restarts the URI and can false-trigger track-end → skip loops.
+          const shouldPlay = Boolean(party.nowPlaying && !party.isPaused);
+          await transferPlayback(accessToken, deviceId, shouldPlay);
+          if (shouldPlay && !playback && party.nowPlaying) {
             await startPlayback(
               accessToken,
               deviceId,
@@ -225,9 +330,14 @@ export async function POST(
               party.playbackPositionMs || 0,
             );
           }
-        } catch (err) {
-          // Device may not be in Spotify's list yet; keep stored deviceId anyway.
-          if (!browserDevice) throw err;
+        } catch {
+          // Web Playback devices often aren't in Spotify's list for a few seconds.
+          return NextResponse.json({
+            ok: true,
+            deviceId,
+            linked: false,
+            pending: true,
+          });
         }
       }
 
@@ -236,19 +346,6 @@ export async function POST(
         deviceId,
         linked: true,
       });
-    }
-
-    if (body.action === "register-device" || body.action === "link-device") {
-      if (!body.deviceId) {
-        return NextResponse.json(
-          { error: "deviceId required" },
-          { status: 400 },
-        );
-      }
-      return await linkBrowserDevice(
-        body.deviceId,
-        body.action === "link-device",
-      );
     }
 
     const deviceId = body.deviceId || party.deviceId;
@@ -267,7 +364,7 @@ export async function POST(
       const position =
         typeof body.positionMs === "number" && body.positionMs >= 0
           ? Math.floor(body.positionMs)
-          : party.playbackPositionMs || 0;
+          : resolvePlaybackPosition(party);
       await ref.set(
         {
           isPaused: true,

@@ -65,8 +65,22 @@ export async function POST(
     return NextResponse.json({ ok: true });
   }
 
+  const existingGuest = existing.data() as PartyGuest;
+  const now = Date.now();
+  const searchingUnchanged =
+    typeof body.isSearching !== "boolean" ||
+    body.isSearching === Boolean(existingGuest.isSearching);
+  // Skip no-op heartbeats so many guests don't rewrite Firestore every tick.
+  if (
+    searchingUnchanged &&
+    existingGuest.lastSeenAt > 0 &&
+    now - existingGuest.lastSeenAt < 20_000
+  ) {
+    return NextResponse.json({ ok: true, throttled: true });
+  }
+
   const patch: Partial<PartyGuest> = {
-    lastSeenAt: Date.now(),
+    lastSeenAt: now,
   };
   if (typeof body.isSearching === "boolean") {
     patch.isSearching = body.isSearching;

@@ -113,6 +113,8 @@ export type SpotifyPlaybackSnapshot = {
   deviceId: string | null;
   deviceName: string | null;
   isPlaying: boolean;
+  progressMs: number;
+  trackUri: string | null;
 };
 
 export type SpotifyConnectDevice = {
@@ -174,12 +176,16 @@ export async function getPlaybackState(
   }
   const data = (await res.json()) as {
     is_playing?: boolean;
+    progress_ms?: number;
     device?: { id?: string | null; name?: string | null } | null;
+    item?: { uri?: string | null } | null;
   };
   return {
     deviceId: data.device?.id ?? null,
     deviceName: data.device?.name ?? null,
     isPlaying: Boolean(data.is_playing),
+    progressMs: Math.max(0, Math.floor(data.progress_ms ?? 0)),
+    trackUri: data.item?.uri ?? null,
   };
 }
 

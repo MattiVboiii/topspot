@@ -7,10 +7,17 @@ type Props = {
   alt?: string;
   size: number;
   className?: string;
+  priority?: boolean;
 };
 
 /** Album/playlist art from Spotify CDN (or empty placeholder). */
-export function CoverArt({ src, alt = "", size, className }: Props) {
+export function CoverArt({
+  src,
+  alt = "",
+  size,
+  className,
+  priority = false,
+}: Props) {
   if (!src) {
     return (
       <div
@@ -26,6 +33,7 @@ export function CoverArt({ src, alt = "", size, className }: Props) {
       width={size}
       height={size}
       className={className}
+      priority={priority}
       unoptimized={src.startsWith("data:")}
     />
   );

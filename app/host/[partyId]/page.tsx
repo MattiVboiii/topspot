@@ -17,7 +17,12 @@ import { useGuestPresence } from "@/lib/hooks/use-guest-presence";
 import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
 import { useSpotifyPlayer } from "@/lib/hooks/use-spotify-player";
 import { fill, useT } from "@/lib/i18n/provider";
-import { isGuestOnline, nextQueueTrack } from "@/lib/party/queue";
+import {
+  isGuestOnline,
+  nextQueueTrack,
+  resolvePlaybackPosition,
+  shouldWritePlaybackSync,
+} from "@/lib/party/queue";
 import type { SpotifySearchTrack } from "@/lib/types/party";
 import { QrCodeIcon, SettingsIcon, TvIcon } from "lucide-react";
 import Link from "next/link";
@@ -34,6 +39,8 @@ import {
 
 const HOST_HOWTO_KEY = "topspot_host_howto_v1";
 const AUTO_LINK_KEY = "topspot_auto_link_device";
+const SILENT_LINK_COOLDOWN_MS = 45_000;
+const DEVICE_POLL_MS = 60_000;
 
 export default function HostPartyPage() {
   const t = useT();
@@ -64,7 +71,7 @@ export default function HostPartyPage() {
     sessionSpotifyId &&
     (party.playbackSpotifyId || party.hostSpotifyId) === sessionSpotifyId,
   );
-  // Keep SDK enablement stable so progress Firestore ticks don't recreate the player.
+  // Keep SDK enablement stable so party realtime updates don't recreate the player.
   const playerEnabled =
     authState === "in" && Boolean(partyId) && !showExplainer && isController;
   const {
@@ -73,6 +80,7 @@ export default function HostPartyPage() {
     error: playerError,
     status: playerStatus,
     positionMs,
+    paused: sdkPaused,
     isActiveDevice: sdkActiveDevice,
   } = useSpotifyPlayer(playerEnabled, partyId);
 
@@ -96,7 +104,12 @@ export default function HostPartyPage() {
   const linkingRef = useRef(false);
   const autoLinkRef = useRef(false);
   const sdkActiveDeviceRef = useRef(false);
+  const sdkPausedRef = useRef(true);
+  const positionMsRef = useRef(0);
   const partyPausedRef = useRef(true);
+  const partyRef = useRef(party);
+  const lastSilentLinkAtRef = useRef(0);
+  const deviceNameRef = useRef(t.player.deviceName);
   const linkBrowserDeviceRef = useRef<
     (opts?: { silent?: boolean }) => Promise<void>
   >(async () => {});
@@ -110,8 +123,30 @@ export default function HostPartyPage() {
   }, [sdkActiveDevice]);
 
   useEffect(() => {
+    sdkPausedRef.current = sdkPaused;
+  }, [sdkPaused]);
+
+  useEffect(() => {
+    positionMsRef.current = positionMs;
+  }, [positionMs]);
+
+  useEffect(() => {
+    partyRef.current = party;
+  }, [party]);
+
+  useEffect(() => {
+    deviceNameRef.current = t.player.deviceName;
+  }, [t.player.deviceName]);
+
+  useEffect(() => {
     partyPausedRef.current = Boolean(party?.isPaused || !party?.nowPlaying);
   }, [party?.isPaused, party?.nowPlaying]);
+
+  useEffect(() => {
+    if (!sdkActiveDevice) return;
+    setDeviceLinked(true);
+    setActiveDeviceName((prev) => prev ?? deviceNameRef.current);
+  }, [sdkActiveDevice]);
 
   useEffect(() => {
     if (party && party.isActive === false) {
@@ -254,12 +289,20 @@ export default function HostPartyPage() {
     setBusy(true);
     setActionError(null);
     try {
+      const pausePosition =
+        action === "pause" && party
+          ? sdkActiveDevice
+            ? Math.floor(positionMs)
+            : Math.floor(resolvePlaybackPosition(party))
+          : undefined;
       const res = await fetch(`/api/parties/${partyId}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
-          ...(action === "pause" ? { positionMs } : {}),
+          ...(typeof pausePosition === "number"
+            ? { positionMs: pausePosition }
+            : {}),
         }),
       });
       const data = (await res.json()) as { error?: string };
@@ -271,11 +314,27 @@ export default function HostPartyPage() {
     }
   }
 
+  const trySilentAutoLink = useCallback(() => {
+    if (!autoLinkRef.current || partyPausedRef.current || linkingRef.current) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSilentLinkAtRef.current < SILENT_LINK_COOLDOWN_MS) return;
+    lastSilentLinkAtRef.current = now;
+    void linkBrowserDeviceRef.current({ silent: true });
+  }, []);
+
   const checkDeviceLink = useCallback(
     async (opts?: { manual?: boolean }) => {
       if (!browserDeviceId) {
         setDeviceLinked(null);
         setActiveDeviceName(null);
+        return;
+      }
+      // Trust the Web Playback SDK — avoid Spotify device-status round-trips.
+      if (sdkActiveDeviceRef.current && !opts?.manual) {
+        setDeviceLinked(true);
+        setActiveDeviceName((prev) => prev ?? deviceNameRef.current);
         return;
       }
       if (opts?.manual) {
@@ -301,19 +360,11 @@ export default function HostPartyPage() {
         setDeviceLinked(linked);
         setActiveDeviceName(
           linked
-            ? (data.activeDeviceName ?? t.player.deviceName)
+            ? (data.activeDeviceName ?? deviceNameRef.current)
             : (data.activeDeviceName ?? null),
         );
 
-        // Auto-link only while party playback is active (not paused / no track).
-        if (
-          !linked &&
-          autoLinkRef.current &&
-          !partyPausedRef.current &&
-          !linkingRef.current
-        ) {
-          void linkBrowserDeviceRef.current({ silent: true });
-        }
+        if (!linked) trySilentAutoLink();
       } catch (err) {
         if (opts?.manual) {
           setActionError(
@@ -324,7 +375,7 @@ export default function HostPartyPage() {
         if (opts?.manual) setDeviceCheckBusy(false);
       }
     },
-    [browserDeviceId, partyId, t.player.deviceName],
+    [browserDeviceId, partyId, trySilentAutoLink],
   );
 
   const linkBrowserDevice = useCallback(
@@ -346,12 +397,19 @@ export default function HostPartyPage() {
         });
         const data = (await res.json()) as {
           linked?: boolean;
+          pending?: boolean;
           error?: string;
         };
         if (!res.ok) throw new Error(data.error || "Could not link browser");
-        setDeviceLinked(true);
-        setActiveDeviceName(t.player.deviceName);
-        if (!opts?.silent) await checkDeviceLink();
+        if (data.linked) {
+          setDeviceLinked(true);
+          setActiveDeviceName(deviceNameRef.current);
+        } else if (!opts?.silent) {
+          setDeviceLinked(false);
+        }
+        if (!opts?.silent && data.linked) {
+          await checkDeviceLink({ manual: true });
+        }
       } catch (err) {
         if (!opts?.silent) {
           setActionError(
@@ -363,7 +421,7 @@ export default function HostPartyPage() {
         if (!opts?.silent) setBusy(false);
       }
     },
-    [browserDeviceId, partyId, checkDeviceLink, t.player.deviceName],
+    [browserDeviceId, partyId, checkDeviceLink],
   );
 
   useEffect(() => {
@@ -416,7 +474,7 @@ export default function HostPartyPage() {
       // ignore
     }
     if (enabled && deviceLinked === false && !partyPausedRef.current) {
-      void linkBrowserDevice({ silent: true });
+      trySilentAutoLink();
     }
   }
 
@@ -424,29 +482,93 @@ export default function HostPartyPage() {
     if (!canControlDevice) return;
     const kickoff = window.setTimeout(() => {
       void checkDeviceLink();
-    }, 0);
-    const id = window.setInterval(() => void checkDeviceLink(), 20_000);
+    }, 1_500);
+    const id = window.setInterval(() => void checkDeviceLink(), DEVICE_POLL_MS);
     return () => {
       window.clearTimeout(kickoff);
       window.clearInterval(id);
     };
   }, [canControlDevice, checkDeviceLink]);
 
-  // When playback resumes, immediately auto-link if needed.
+  const nowPlayingId = party?.nowPlaying?.id ?? null;
+  const partyIsPaused = party?.isPaused ?? true;
+
+  // When playback resumes, auto-link if needed (debounced; stable deps).
   useEffect(() => {
     if (!autoLink || !canControlDevice) return;
-    if (party?.isPaused || !party?.nowPlaying) return;
+    if (partyIsPaused || !nowPlayingId) return;
     if (deviceLinked !== false) return;
     const timer = window.setTimeout(() => {
-      void linkBrowserDeviceRef.current({ silent: true });
-    }, 0);
+      trySilentAutoLink();
+    }, 500);
     return () => window.clearTimeout(timer);
   }, [
     autoLink,
     canControlDevice,
-    party?.isPaused,
-    party?.nowPlaying,
+    partyIsPaused,
+    nowPlayingId,
     deviceLinked,
+    trySilentAutoLink,
+  ]);
+
+  // Sync pause/play to Firestore only when something actually changes.
+  // Steady playback needs no network — guests advance from wall-clock.
+  const syncInFlightRef = useRef(false);
+  const lastSyncedPausedRef = useRef<boolean | null>(null);
+
+  const pushPlaybackSync = useCallback(async () => {
+    if (!isController || !nowPlayingId || syncInFlightRef.current) return;
+    const currentParty = partyRef.current;
+    if (!currentParty?.nowPlaying || !sdkActiveDeviceRef.current) return;
+
+    const snapshot = {
+      positionMs: positionMsRef.current,
+      isPaused: sdkPausedRef.current,
+    };
+    // Transfer/link often emits paused@0 — ignore those.
+    if (
+      snapshot.isPaused &&
+      snapshot.positionMs < 400 &&
+      !partyPausedRef.current
+    ) {
+      return;
+    }
+    if (!shouldWritePlaybackSync(currentParty, snapshot)) return;
+
+    syncInFlightRef.current = true;
+    try {
+      await fetch(`/api/parties/${partyId}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sync-playback",
+          positionMs: snapshot.positionMs,
+          isPaused: snapshot.isPaused,
+        }),
+      });
+      lastSyncedPausedRef.current = snapshot.isPaused;
+    } catch {
+      // best-effort
+    } finally {
+      syncInFlightRef.current = false;
+    }
+  }, [isController, nowPlayingId, partyId]);
+
+  // Only when SDK pause flips (e.g. Spotify UI outside TopSpot).
+  useEffect(() => {
+    if (!isController || !nowPlayingId || !sdkActiveDevice) {
+      if (!sdkActiveDevice) lastSyncedPausedRef.current = null;
+      return;
+    }
+    if (lastSyncedPausedRef.current === sdkPaused) return;
+    lastSyncedPausedRef.current = sdkPaused;
+    void pushPlaybackSync();
+  }, [
+    isController,
+    nowPlayingId,
+    sdkActiveDevice,
+    sdkPaused,
+    pushPlaybackSync,
   ]);
 
   async function onAdd(track: SpotifySearchTrack) {
@@ -652,11 +774,14 @@ export default function HostPartyPage() {
           <div className="[&>section]:rounded-none [&>section]:border-0 [&>section]:bg-transparent [&>section]:backdrop-blur-none">
             {isController ? (
               <HostPlayerBar
-                key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
+                key={`${party.nowPlaying?.id ?? "none"}-${party.isPaused ? "paused" : "playing"}`}
                 mode="controller"
                 party={party}
-                livePositionMs={playerReady ? positionMs : null}
-                isPaused={party.isPaused || !party.nowPlaying}
+                livePositionMs={sdkActiveDevice ? positionMs : null}
+                isPaused={
+                  !party.nowPlaying ||
+                  (sdkActiveDevice ? sdkPaused : party.isPaused)
+                }
                 playerReady={playerReady}
                 busy={busy}
                 status={playerStatus}
@@ -675,7 +800,7 @@ export default function HostPartyPage() {
               />
             ) : (
               <HostPlayerBar
-                key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
+                key={`${party.nowPlaying?.id ?? "none"}-${party.isPaused ? "paused" : "playing"}`}
                 mode="readonly"
                 party={party}
                 readonlyMessage={t.player.controlsElsewhere}

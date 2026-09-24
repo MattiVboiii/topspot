@@ -51,6 +51,10 @@ export type Dictionary = {
     waitingTitle: string;
     waitingSub: string;
     upNext: string;
+    comingUp: string;
+    hostedBy: string;
+    liveGuests: string;
+    joinHint: string;
     ended: string;
     viewRecap: string;
     loading: string;

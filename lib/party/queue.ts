@@ -104,7 +104,26 @@ export function resolvePlaybackPosition(
   return position;
 }
 
-export const GUEST_ONLINE_MS = 75_000;
+const PLAYBACK_SYNC_POSITION_DRIFT_MS = 1_500;
+
+/** Whether party Firestore should be updated from Spotify/SDK playback. */
+export function shouldWritePlaybackSync(
+  party: Pick<
+    Party,
+    "isPaused" | "playbackPositionMs" | "playbackUpdatedAt" | "nowPlaying"
+  >,
+  next: { positionMs: number; isPaused: boolean },
+  now = Date.now(),
+): boolean {
+  if (!party.nowPlaying) return false;
+  if (party.isPaused !== next.isPaused) return true;
+  const expected = resolvePlaybackPosition(party, { now });
+  return (
+    Math.abs(expected - next.positionMs) >= PLAYBACK_SYNC_POSITION_DRIFT_MS
+  );
+}
+
+export const GUEST_ONLINE_MS = 120_000;
 
 export function isGuestOnline(
   guest: { lastSeenAt?: number },

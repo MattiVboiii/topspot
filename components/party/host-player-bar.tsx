@@ -1,13 +1,13 @@
 "use client";
 
 import { CoverArt } from "@/components/party/cover-art";
-import { formatDuration } from "@/lib/party/codes";
+import { usePlaybackNow } from "@/lib/hooks/use-playback-now";
 import { fill, useT } from "@/lib/i18n/provider";
 import type { Dictionary } from "@/lib/i18n/types";
+import { formatDuration } from "@/lib/party/codes";
 import { resolvePlaybackPosition } from "@/lib/party/queue";
 import type { Party } from "@/lib/types/party";
 import { Pause, Play, SkipForward } from "lucide-react";
-import { useEffect, useState } from "react";
 
 type ControllerProps = {
   mode: "controller";
@@ -161,25 +161,11 @@ export function HostPlayerBar(props: Props) {
   const trackId = nowPlaying?.id ?? null;
   const isPaused = party.isPaused;
   const playbackUpdatedAt = party.playbackUpdatedAt ?? 0;
-  const basePosition = party.playbackPositionMs || 0;
   const hasLivePosition = typeof livePositionMs === "number";
-  const [nowMs, setNowMs] = useState(playbackUpdatedAt || 0);
-
-  useEffect(() => {
-    if (!trackId || isPaused || hasLivePosition) {
-      return;
-    }
-    const id = window.setInterval(() => {
-      setNowMs(Date.now());
-    }, 250);
-    const raf = window.requestAnimationFrame(() => {
-      setNowMs(Date.now());
-    });
-    return () => {
-      window.clearInterval(id);
-      window.cancelAnimationFrame(raf);
-    };
-  }, [trackId, isPaused, playbackUpdatedAt, basePosition, hasLivePosition]);
+  const nowMs = usePlaybackNow({
+    active: Boolean(trackId) && !isPaused,
+    hasLivePosition,
+  });
 
   const isController = props.mode === "controller";
   const controllerPaused = isController && (props.isPaused || !nowPlaying);
@@ -199,8 +185,12 @@ export function HostPlayerBar(props: Props) {
             <p className="text-xs uppercase tracking-[0.2em] text-white/45">
               {dict.nowPlaying.label}
             </p>
-            <p className="mt-0.5 font-semibold text-white">{dict.nowPlaying.nothingYet}</p>
-            <p className="text-xs text-white/55">{dict.nowPlaying.addAndPlay}</p>
+            <p className="mt-0.5 font-semibold text-white">
+              {dict.nowPlaying.nothingYet}
+            </p>
+            <p className="text-xs text-white/55">
+              {dict.nowPlaying.addAndPlay}
+            </p>
           </div>
           {isController && (
             <PlaybackButtons
@@ -358,7 +348,9 @@ export function HostPlayerBar(props: Props) {
                 className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 px-2.5 py-2 text-left transition hover:bg-white/3"
               >
                 <span className="text-xs text-white/70">
-                  <span className="font-semibold text-white">{dict.player.autoLink}</span>
+                  <span className="font-semibold text-white">
+                    {dict.player.autoLink}
+                  </span>
                   <span className="text-white/45">
                     {" "}
                     · {props.autoLink ? dict.player.on : dict.player.off}
@@ -384,9 +376,7 @@ export function HostPlayerBar(props: Props) {
             <p className="mt-2 text-xs text-amber-200">{props.error}</p>
           )}
           {props.showPlayerHint && !props.playerReady && !props.error && (
-            <p className="mt-2 text-[11px] text-white/45">
-              {dict.player.hint}
-            </p>
+            <p className="mt-2 text-[11px] text-white/45">{dict.player.hint}</p>
           )}
         </>
       )}

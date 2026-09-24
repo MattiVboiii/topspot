@@ -2,7 +2,8 @@
 
 import { useEffect, useRef } from "react";
 
-const HEARTBEAT_MS = 25_000;
+const HEARTBEAT_MS = 45_000;
+const SEARCHING_DEBOUNCE_MS = 800;
 
 type Options = {
   partyId: string | null;
@@ -24,6 +25,7 @@ export function useGuestPresence({
   const getIdTokenRef = useRef(getIdToken);
   const tokenRef = useRef<string | null>(null);
   const searchingRef = useRef(isSearching);
+  const lastHeartbeatAtRef = useRef(0);
 
   useEffect(() => {
     getIdTokenRef.current = getIdToken;
@@ -45,11 +47,11 @@ export function useGuestPresence({
     ) => {
       try {
         let token = tokenRef.current;
-        if (!token || action === "heartbeat") {
+        if (!token) {
           token = await getIdTokenRef.current();
           tokenRef.current = token;
         }
-        await fetch(`/api/parties/${partyId}/guests`, {
+        const res = await fetch(`/api/parties/${partyId}/guests`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
@@ -62,6 +64,12 @@ export function useGuestPresence({
           ),
           keepalive: action === "leave",
         });
+        if (res.status === 401) {
+          tokenRef.current = null;
+        }
+        if (action === "heartbeat" && res.ok) {
+          lastHeartbeatAtRef.current = Date.now();
+        }
       } catch {
         // ignore presence failures
       }
@@ -106,32 +114,52 @@ export function useGuestPresence({
     };
   }, [enabled, partyId]);
 
+  const prevSearchingRef = useRef<boolean | null>(null);
+
   useEffect(() => {
-    if (!enabled || !partyId) return;
+    if (!enabled || !partyId) {
+      prevSearchingRef.current = null;
+      return;
+    }
     if (document.visibilityState !== "visible") return;
+    if (prevSearchingRef.current === isSearching) return;
+    const isFirst = prevSearchingRef.current === null;
+    prevSearchingRef.current = isSearching;
+    // First sync is covered by the interval heartbeat start().
+    if (isFirst) return;
+
     let cancelled = false;
-    void (async () => {
-      try {
-        const token = await getIdTokenRef.current();
-        tokenRef.current = token;
-        if (cancelled) return;
-        await fetch(`/api/parties/${partyId}/guests`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            action: "heartbeat",
-            isSearching,
-          }),
-        });
-      } catch {
-        // ignore
-      }
-    })();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          let token = tokenRef.current;
+          if (!token) {
+            token = await getIdTokenRef.current();
+            tokenRef.current = token;
+          }
+          if (cancelled) return;
+          const res = await fetch(`/api/parties/${partyId}/guests`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "heartbeat",
+              isSearching,
+            }),
+          });
+          if (res.status === 401) tokenRef.current = null;
+          if (res.ok) lastHeartbeatAtRef.current = Date.now();
+        } catch {
+          // ignore
+        }
+      })();
+    }, SEARCHING_DEBOUNCE_MS);
+
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [enabled, partyId, isSearching]);
 }

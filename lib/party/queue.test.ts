@@ -1,17 +1,20 @@
-import { describe, expect, it } from "vitest";
 import {
   downvotesEnabled,
   netVoteCount,
   nextQueueTrack,
+  resolvePlaybackPosition,
   shouldRemoveForDownvoteThreshold,
+  shouldWritePlaybackSync,
   sortPartyQueue,
   usesDownvoteThreshold,
   usesScoreSorting,
 } from "@/lib/party/queue";
 import type { PartyTrack } from "@/lib/types/party";
+import { describe, expect, it } from "vitest";
 
 function track(
-  partial: Partial<PartyTrack> & Pick<PartyTrack, "id" | "voteCount" | "addedAt">,
+  partial: Partial<PartyTrack> &
+    Pick<PartyTrack, "id" | "voteCount" | "addedAt">,
 ): PartyTrack {
   return {
     name: partial.name ?? partial.id,
@@ -118,5 +121,74 @@ describe("shouldRemoveForDownvoteThreshold", () => {
     expect(shouldRemoveForDownvoteThreshold(10, undefined, "threshold")).toBe(
       false,
     );
+  });
+});
+
+describe("resolvePlaybackPosition / shouldWritePlaybackSync", () => {
+  const baseParty = {
+    isPaused: false,
+    playbackPositionMs: 10_000,
+    playbackUpdatedAt: 1_000_000,
+    nowPlaying: {
+      id: "t1",
+      name: "Song",
+      artists: "Artist",
+      albumName: "Album",
+      albumArtUrl: null,
+      durationMs: 180_000,
+      uri: "spotify:track:t1",
+      source: "request" as const,
+      startedAt: 1_000_000,
+    },
+  };
+
+  it("advances wall-clock while playing and freezes while paused", () => {
+    expect(resolvePlaybackPosition(baseParty, { now: 1_005_000 })).toBe(15_000);
+    expect(
+      resolvePlaybackPosition(
+        { ...baseParty, isPaused: true },
+        { now: 1_005_000 },
+      ),
+    ).toBe(10_000);
+  });
+
+  it("prefers live SDK position when provided", () => {
+    expect(
+      resolvePlaybackPosition(baseParty, {
+        livePositionMs: 42_000,
+        now: 1_005_000,
+      }),
+    ).toBe(42_000);
+  });
+
+  it("writes sync on pause flip or position drift", () => {
+    expect(
+      shouldWritePlaybackSync(
+        baseParty,
+        { positionMs: 15_000, isPaused: true },
+        1_001_000,
+      ),
+    ).toBe(true);
+    expect(
+      shouldWritePlaybackSync(
+        baseParty,
+        { positionMs: 15_000, isPaused: false },
+        1_001_000,
+      ),
+    ).toBe(false);
+    expect(
+      shouldWritePlaybackSync(
+        baseParty,
+        { positionMs: 20_000, isPaused: false },
+        1_001_000,
+      ),
+    ).toBe(true);
+    expect(
+      shouldWritePlaybackSync(
+        baseParty,
+        { positionMs: 15_100, isPaused: false },
+        1_015_000,
+      ),
+    ).toBe(false);
   });
 });

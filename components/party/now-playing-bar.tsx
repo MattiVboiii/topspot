@@ -1,11 +1,11 @@
 "use client";
 
 import { CoverArt } from "@/components/party/cover-art";
-import { formatDuration } from "@/lib/party/codes";
+import { usePlaybackNow } from "@/lib/hooks/use-playback-now";
 import { useT } from "@/lib/i18n/provider";
+import { formatDuration } from "@/lib/party/codes";
 import { resolvePlaybackPosition } from "@/lib/party/queue";
 import type { Party } from "@/lib/types/party";
-import { useEffect, useState } from "react";
 
 type Props = {
   party: Party;
@@ -19,25 +19,11 @@ export function NowPlayingBar({ party, livePositionMs }: Props) {
   const trackId = nowPlaying?.id ?? null;
   const isPaused = party.isPaused;
   const playbackUpdatedAt = party.playbackUpdatedAt ?? 0;
-  const basePosition = party.playbackPositionMs || 0;
   const hasLivePosition = typeof livePositionMs === "number";
-  const [nowMs, setNowMs] = useState(playbackUpdatedAt || 0);
-
-  useEffect(() => {
-    if (!trackId || isPaused || hasLivePosition) {
-      return;
-    }
-    const id = window.setInterval(() => {
-      setNowMs(Date.now());
-    }, 250);
-    const raf = window.requestAnimationFrame(() => {
-      setNowMs(Date.now());
-    });
-    return () => {
-      window.clearInterval(id);
-      window.cancelAnimationFrame(raf);
-    };
-  }, [trackId, isPaused, playbackUpdatedAt, basePosition, hasLivePosition]);
+  const nowMs = usePlaybackNow({
+    active: Boolean(trackId) && !isPaused,
+    hasLivePosition,
+  });
 
   if (!nowPlaying) {
     return (
