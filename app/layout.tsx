@@ -1,5 +1,6 @@
-import type { Metadata, Viewport } from "next";
+import { getAppUrl } from "@/lib/app-url";
 import { LocaleProvider } from "@/lib/i18n/LocaleProvider";
+import type { Metadata, Viewport } from "next";
 import { DM_Sans, Geist_Mono, Syne } from "next/font/google";
 import "./globals.css";
 
@@ -20,6 +21,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getAppUrl()),
   title: {
     default: "TopSpot — Party Jukebox",
     template: "%s · TopSpot",
@@ -33,9 +35,10 @@ export const metadata: Metadata = {
     description: "Democratic Spotify party queue. Guests vote, the host plays.",
     type: "website",
     siteName: "TopSpot",
+    locale: "en_US",
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "TopSpot — Party Jukebox",
     description: "Democratic Spotify party queue. Guests vote, the host plays.",
   },

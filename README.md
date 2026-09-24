@@ -2,6 +2,8 @@
 
 Democratic Spotify party jukebox — guests vote, the host plays.
 
+**Live:** [topspotparty.vercel.app](https://topspotparty.vercel.app/) · **License:** MIT · **Version:** 1.0.0
+
 ## Stack
 
 Next.js (App Router) · Firebase Auth / Firestore · Spotify Web API + Web Playback SDK · Vercel

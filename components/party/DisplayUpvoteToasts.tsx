@@ -28,14 +28,15 @@ function UpvoteToastItem({
   onDismiss: (toastId: string) => void;
 }) {
   const t = useT();
-  const [exiting, setExiting] = useState(false);
+  const [timedExit, setTimedExit] = useState(false);
+  const exiting = forceExit || timedExit;
 
   useEffect(() => {
-    if (forceExit) {
-      setExiting(true);
-      return;
-    }
-    const holdTimer = window.setTimeout(() => setExiting(true), TOAST_HOLD_MS);
+    if (forceExit) return;
+    const holdTimer = window.setTimeout(
+      () => setTimedExit(true),
+      TOAST_HOLD_MS,
+    );
     return () => window.clearTimeout(holdTimer);
   }, [forceExit]);
 

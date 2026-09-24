@@ -48,12 +48,14 @@ export function useDisplayUpvoteFeed(tracks: PartyTrack[]) {
     prevCountsRef.current = next;
     if (bumped.length === 0) return;
 
-    setBumpedIds((current) => {
-      const merged = new Set(current);
-      bumped.forEach((id) => merged.add(id));
-      return merged;
-    });
-    setToasts((current) => [...current, ...newToasts]);
+    const applyTimer = window.setTimeout(() => {
+      setBumpedIds((current) => {
+        const merged = new Set(current);
+        bumped.forEach((id) => merged.add(id));
+        return merged;
+      });
+      setToasts((current) => [...current, ...newToasts]);
+    }, 0);
 
     const bumpTimer = window.setTimeout(() => {
       setBumpedIds((current) => {
@@ -63,7 +65,10 @@ export function useDisplayUpvoteFeed(tracks: PartyTrack[]) {
       });
     }, BUMP_MS);
 
-    return () => window.clearTimeout(bumpTimer);
+    return () => {
+      window.clearTimeout(applyTimer);
+      window.clearTimeout(bumpTimer);
+    };
   }, [tracks]);
 
   const dismissToast = useCallback((toastId: string) => {
