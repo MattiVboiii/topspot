@@ -169,10 +169,11 @@ describe("resolvePlaybackPosition / shouldWritePlaybackSync", () => {
         1_001_000,
       ),
     ).toBe(true);
+    // Wall-clock expected at +1s is 11_000 — within drift threshold.
     expect(
       shouldWritePlaybackSync(
         baseParty,
-        { positionMs: 15_000, isPaused: false },
+        { positionMs: 11_000, isPaused: false },
         1_001_000,
       ),
     ).toBe(false);
@@ -183,10 +184,11 @@ describe("resolvePlaybackPosition / shouldWritePlaybackSync", () => {
         1_001_000,
       ),
     ).toBe(true);
+    // Wall-clock expected at +15s is 25_000 — 100ms drift stays under threshold.
     expect(
       shouldWritePlaybackSync(
         baseParty,
-        { positionMs: 15_100, isPaused: false },
+        { positionMs: 25_100, isPaused: false },
         1_015_000,
       ),
     ).toBe(false);

@@ -4,8 +4,8 @@ import {
   HowItWorks,
   markHowItWorksSeen,
   useHowItWorksDismissed,
-} from "@/components/party/how-it-works";
-import { useT } from "@/lib/i18n/provider";
+} from "@/components/party/HowItWorks";
+import { useT } from "@/lib/i18n/LocaleProvider";
 import type { GuestMode } from "@/lib/types/party";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";

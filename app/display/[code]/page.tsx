@@ -1,21 +1,22 @@
 "use client";
 
-import { LocaleToggle } from "@/components/locale-toggle";
-import { CoverArt } from "@/components/party/cover-art";
-import { QrCard } from "@/components/party/qr-card";
+import { LocaleToggle } from "@/components/LocaleToggle";
+import { CoverArt } from "@/components/party/CoverArt";
+import { QrCard } from "@/components/party/QrCard";
+import { usePartyByCode } from "@/lib/hooks/use-party-by-code";
 import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
 import { usePlaybackNow } from "@/lib/hooks/use-playback-now";
-import { fill, useT } from "@/lib/i18n/provider";
+import { fill, useT } from "@/lib/i18n/LocaleProvider";
 import { formatDuration } from "@/lib/party/codes";
 import {
   isGuestOnline,
   nextQueueTrack,
   resolvePlaybackPosition,
 } from "@/lib/party/queue";
-import type { Party, PartyTrack } from "@/lib/types/party";
+import type { PartyTrack } from "@/lib/types/party";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 function PlayingEqualizer({ active }: { active: boolean }) {
   if (!active) {
@@ -96,30 +97,7 @@ export default function DisplayPartyPage() {
   const t = useT();
   const params = useParams<{ code: string }>();
   const code = (params.code || "").toUpperCase();
-  const [partyMeta, setPartyMeta] = useState<Party | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const res = await fetch(`/api/parties/by-code/${code}`);
-        const data = (await res.json()) as { party?: Party; error?: string };
-        if (!res.ok || !data.party) {
-          throw new Error(data.error || "Party not found");
-        }
-        if (!cancelled) setPartyMeta(data.party);
-      } catch (err) {
-        if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : "Could not load");
-        }
-      }
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [code]);
+  const { partyMeta, loadError } = usePartyByCode(code, { mode: "display" });
 
   const {
     party,

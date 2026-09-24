@@ -1,28 +1,29 @@
 "use client";
 
-import { LocaleToggle } from "@/components/locale-toggle";
-import { GuestNameGate } from "@/components/party/guest-name-gate";
-import { HostTransferBanner } from "@/components/party/host-transfer-banner";
+import { LocaleToggle } from "@/components/LocaleToggle";
+import { GuestNameGate } from "@/components/party/GuestNameGate";
+import { HostTransferBanner } from "@/components/party/HostTransferBanner";
 import {
   HowItWorks,
   markHowItWorksSeen,
   useHowItWorksDismissed,
-} from "@/components/party/how-it-works";
-import { NowPlayingBar } from "@/components/party/now-playing-bar";
-import { PartyRecapView } from "@/components/party/party-recap-view";
-import { QrCard } from "@/components/party/qr-card";
-import { QueueList } from "@/components/party/queue-list";
-import { TrackSearch } from "@/components/party/track-search";
-import { UpNextBanner } from "@/components/party/up-next-banner";
+} from "@/components/party/HowItWorks";
+import { NowPlayingBar } from "@/components/party/NowPlayingBar";
+import { PartyRecapView } from "@/components/party/PartyRecapView";
+import { QrCard } from "@/components/party/QrCard";
+import { QueueList } from "@/components/party/QueueList";
+import { TrackSearch } from "@/components/party/TrackSearch";
+import { UpNextBanner } from "@/components/party/UpNextBanner";
 import { useGuestAuth } from "@/lib/hooks/use-guest-auth";
 import { useGuestPresence } from "@/lib/hooks/use-guest-presence";
+import { usePartyByCode } from "@/lib/hooks/use-party-by-code";
+import { usePartyMutations } from "@/lib/hooks/use-party-mutations";
 import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
-import { fill, useT } from "@/lib/i18n/provider";
+import { fill, useT } from "@/lib/i18n/LocaleProvider";
 import { nextQueueTrack } from "@/lib/party/queue";
-import type { Party, SpotifySearchTrack } from "@/lib/types/party";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const GUEST_HOWTO_KEY = "topspot_guest_howto_v1";
 
@@ -35,21 +36,33 @@ export default function GuestPartyPage() {
   const howtoSeen = useHowItWorksDismissed(GUEST_HOWTO_KEY);
   const [howtoJustDismissed, setHowtoJustDismissed] = useState(false);
   const explained = howtoSeen || howtoJustDismissed;
-  const [partyMeta, setPartyMeta] = useState<Party | null>(null);
-  const [joined, setJoined] = useState(false);
-  const [gateNeeded, setGateNeeded] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [myVotes, setMyVotes] = useState<Record<string, 1 | -1>>({});
-  const [guestId, setGuestId] = useState<string | null>(null);
   const [spotifyLinked, setSpotifyLinked] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [showQr, setShowQr] = useState(false);
+
+  const {
+    partyMeta,
+    loadError,
+    joined,
+    gateNeeded,
+    guestId,
+    joinParty,
+  } = usePartyByCode(code, {
+    mode: "guest",
+    enabled: ready && explained,
+    getIdToken,
+  });
 
   const {
     party,
     tracks,
     error: realtimeError,
   } = usePartyRealtime(joined ? (partyMeta?.id ?? null) : null);
+
+  const { myVotes, onAdd, onVote, loadVotes } = usePartyMutations(
+    partyMeta?.id ?? null,
+    getIdToken,
+  );
 
   const joinUrl = useMemo(() => {
     const partyCode = (party ?? partyMeta)?.code || code;
@@ -68,76 +81,10 @@ export default function GuestPartyPage() {
     getIdToken,
   });
 
-  const joinParty = useCallback(
-    async (displayName?: string) => {
-      const token = await getIdToken();
-      const res = await fetch(`/api/parties/by-code/${code}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ displayName }),
-      });
-      const data = (await res.json()) as {
-        party?: Party;
-        guestId?: string;
-        error?: string;
-      };
-      if (!res.ok || !data.party) {
-        throw new Error(data.error || "Could not join party");
-      }
-      setPartyMeta(data.party);
-      setJoined(true);
-      setGateNeeded(false);
-      if (data.guestId) setGuestId(data.guestId);
-
-      const votesRes = await fetch(`/api/parties/${data.party.id}/votes`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (votesRes.ok) {
-        const votes = (await votesRes.json()) as {
-          votes?: Record<string, 1 | -1>;
-        };
-        setMyVotes(votes.votes ?? {});
-      }
-    },
-    [code, getIdToken],
-  );
-
   useEffect(() => {
-    if (!ready || !explained) return;
-    let cancelled = false;
-
-    async function bootstrap() {
-      try {
-        const res = await fetch(`/api/parties/by-code/${code}`);
-        const data = (await res.json()) as { party?: Party; error?: string };
-        if (!res.ok || !data.party) {
-          throw new Error(data.error || "Party not found");
-        }
-        if (cancelled) return;
-        setPartyMeta(data.party);
-        if (!data.party.isActive) {
-          return;
-        }
-        if (data.party.guestMode === "named") {
-          setGateNeeded(true);
-        } else {
-          await joinParty();
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : "Failed to load");
-        }
-      }
-    }
-
-    void bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, code, joinParty, explained]);
+    if (!joined || !partyMeta?.id) return;
+    void loadVotes();
+  }, [joined, partyMeta?.id, loadVotes]);
 
   useEffect(() => {
     if (!guestId || !partyMeta?.id) return;
@@ -157,48 +104,6 @@ export default function GuestPartyPage() {
       cancelled = true;
     };
   }, [guestId, partyMeta?.id, getIdToken]);
-
-  const authedFetch = useCallback(
-    async (url: string, init?: RequestInit) => {
-      const token = await getIdToken();
-      return fetch(url, {
-        ...init,
-        headers: {
-          ...(init?.headers || {}),
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      });
-    },
-    [getIdToken],
-  );
-
-  async function onAdd(track: SpotifySearchTrack) {
-    if (!partyMeta) return;
-    const res = await authedFetch(`/api/parties/${partyMeta.id}/tracks`, {
-      method: "POST",
-      body: JSON.stringify({ track, source: "request" }),
-    });
-    const data = (await res.json()) as { error?: string };
-    if (!res.ok) throw new Error(data.error || "Could not add track");
-    setMyVotes((prev) => ({ ...prev, [track.id]: 1 }));
-  }
-
-  async function onVote(trackId: string, action: "up" | "down") {
-    if (!partyMeta) return;
-    const res = await authedFetch(`/api/parties/${partyMeta.id}/votes`, {
-      method: "POST",
-      body: JSON.stringify({ trackId, action }),
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as { myVote?: 0 | 1 | -1 };
-    setMyVotes((prev) => {
-      const next = { ...prev };
-      if (!data.myVote) delete next[trackId];
-      else next[trackId] = data.myVote;
-      return next;
-    });
-  }
 
   if (!explained) {
     return (

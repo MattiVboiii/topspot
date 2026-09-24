@@ -1,7 +1,7 @@
 "use client";
 
-import { LocaleToggle } from "@/components/locale-toggle";
-import { fill, useT } from "@/lib/i18n/provider";
+import { LocaleToggle } from "@/components/LocaleToggle";
+import { fill, useT } from "@/lib/i18n/LocaleProvider";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, Suspense, useEffect, useState } from "react";
