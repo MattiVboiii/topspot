@@ -1,78 +1,38 @@
 # TopSpot
 
-Democratic Spotify party jukebox — guests vote, the host plays.
+**[topspotparty.vercel.app](https://topspotparty.vercel.app/)**
 
-**Live:** [topspotparty.vercel.app](https://topspotparty.vercel.app/) · **License:** MIT · **Version:** 1.0.0
+Let the room pick the music. TopSpot is a democratic Spotify party jukebox: the host plays from their browser, guests join with a code or QR, and everyone votes the queue in real time.
 
-## Stack
+## How it works
 
-Next.js (App Router) · Firebase Auth / Firestore · Spotify Web API + Web Playback SDK · Vercel
+### Host a party
 
-## Local setup
+Sign in with **Spotify Premium**, create a party, and keep the host tab open — that browser is the player. Share the party code or QR so guests can join from their phones.
 
-1. Create a [Spotify Developer](https://developer.spotify.com/dashboard) app.
-   - Redirect URI: `http://127.0.0.1:3000/api/auth/spotify/callback` (Spotify rejects `localhost`)
-   - Host account must be **Spotify Premium**
-   - After changing scopes, re-authorize (Sign out → Sign in)
-2. Create a Firebase project:
-   - Enable **Anonymous** authentication
-   - Create a Firestore database
-   - Deploy rules: `firebase deploy --only firestore`
-   - Create a web app + service account for the Admin SDK
-   - Add `127.0.0.1` / `localhost` under Authentication → Settings → Authorized domains
-3. Copy env template and fill values:
+In Settings you can:
 
-```bash
-cp .env.example .env.local
-```
+- Add a **fallback playlist** so something always plays when the request queue is empty
+- Toggle **downvotes**
+- See who’s at the party
+- Hand music control to another Premium guest (you stay the party owner)
 
-4. Install and run:
+### Join a party
 
-```bash
-pnpm install
-pnpm dev
-```
+Enter the code on the home page, open the link, or scan the host’s QR. No Premium needed.
 
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
+Search for songs (or connect Spotify to pull from Liked songs), add them to the queue, and vote to bump tracks up. Guest requests always play before the host’s fallback playlist.
 
-## Deploy to Vercel
+## Features
 
-1. Push this repo to GitHub and [import the project in Vercel](https://vercel.com/new).
-2. Add every variable from `.env.example` in **Project → Settings → Environment Variables** (Production + Preview as needed).
-3. Set production URLs (no trailing slash):
+- Live queue with upvotes (and optional downvotes)
+- QR / code join — guests don’t need accounts
+- Fallback playlist when requests run out
+- Progress sync so everyone sees what’s playing
+- Host transfer to another Premium guest
+- Display mode for a big-screen view of the party
+- Party recap when you’re done
 
-   | Variable               | Example                                                          |
-   | ---------------------- | ---------------------------------------------------------------- |
-   | `NEXT_PUBLIC_APP_URL`  | `https://your-app.vercel.app`                                    |
-   | `SPOTIFY_REDIRECT_URI` | `https://your-app.vercel.app/api/auth/spotify/callback`          |
-   | `SESSION_SECRET`       | long random string (`openssl rand -base64 48`)                   |
-   | `CRON_SECRET`          | long random string (Vercel Cron sends `Authorization: Bearer …`) |
+## License
 
-4. In the Spotify Developer Dashboard, add the **production** redirect URI above.
-5. In Firebase Authentication → Authorized domains, add your Vercel domain (and custom domain if any).
-6. Deploy. Confirm Firestore rules/indexes are live (`firestore.rules`, `firestore.indexes.json`).
-
-Daily cron (`vercel.json`) hits `/api/cron/cleanup-parties` at 04:00 UTC to clear idle parties.
-
-## Flow
-
-- **Host:** Sign in with Spotify → how-it-works → create party → Settings for fallback playlist, downvotes, people, host transfer → play from the host browser
-- **Guests:** Open `/p/CODE` or scan QR → how-it-works → (optional name) → search / liked songs, add, vote
-- **Queue:** Requests always play before Fallback. Current track leaves the queue when it starts. Progress syncs to guests.
-- **Host transfer:** Offer takeover to a guest who linked Spotify Premium; they accept and become the new playback host.
-- **Inactivity:** Parties idle for 7 days are wiped (settings, guests, queue/fallback, playback) but kept active with the same code.
-
-## Scripts
-
-| Command      | Purpose                      |
-| ------------ | ---------------------------- |
-| `pnpm dev`   | Local development            |
-| `pnpm build` | Production build             |
-| `pnpm start` | Run production build locally |
-| `pnpm lint`  | ESLint                       |
-
-## Security notes
-
-- Never commit `.env.local` or Firebase private keys.
-- Host Spotify tokens live in Firestore `hosts/{id}` (Admin SDK only — see `firestore.rules`).
-- OAuth `returnTo` is restricted to same-origin relative paths.
+MIT
