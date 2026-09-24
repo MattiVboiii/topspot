@@ -11,7 +11,7 @@ import {
   transferPlayback,
 } from "@/lib/spotify/api";
 import { getHostAccessToken } from "@/lib/spotify/host-tokens";
-import type { Party, PartyTrack } from "@/lib/types/party";
+import type { Party, PartyHistoryEntry, PartyTrack } from "@/lib/types/party";
 import type { DocumentReference, WriteBatch } from "firebase-admin/firestore";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -57,6 +57,50 @@ async function deleteTrackAndVotes(
   votes.docs.forEach((doc) => batch.delete(doc.ref));
 }
 
+function historyEntryFromTrack(
+  track: PartyTrack,
+  playedAt: number,
+  previous?: PartyHistoryEntry | null,
+): PartyHistoryEntry {
+  const up = track.upVoteCount ?? 0;
+  const down = track.downVoteCount ?? 0;
+  const voteCount = track.voteCount ?? up - down;
+  return {
+    id: track.id,
+    trackId: track.id,
+    name: track.name,
+    artists: track.artists,
+    albumName: track.albumName,
+    albumArtUrl: track.albumArtUrl,
+    durationMs: track.durationMs,
+    uri: track.uri,
+    source: track.source === "fallback" ? "fallback" : "request",
+    upVoteCount: up,
+    downVoteCount: down,
+    voteCount,
+    addedBy: track.addedBy,
+    addedByName: track.addedByName,
+    playedAt,
+    playCount: (previous?.playCount ?? 0) + 1,
+    peakUpVoteCount: Math.max(previous?.peakUpVoteCount ?? 0, up),
+    peakVoteCount: Math.max(previous?.peakVoteCount ?? 0, voteCount),
+  };
+}
+
+async function writeHistoryEntry(
+  ref: DocumentReference,
+  track: PartyTrack,
+  playedAt: number,
+  batch: WriteBatch,
+) {
+  const historyRef = ref.collection("history").doc(track.id);
+  const existing = await historyRef.get();
+  const previous = existing.exists
+    ? (existing.data() as PartyHistoryEntry)
+    : null;
+  batch.set(historyRef, historyEntryFromTrack(track, playedAt, previous));
+}
+
 async function promoteTrackToNowPlaying(opts: {
   ref: DocumentReference;
   track: PartyTrack;
@@ -67,6 +111,7 @@ async function promoteTrackToNowPlaying(opts: {
   const now = Date.now();
   const snapshot = toNowPlayingSnapshot(opts.track, now);
   const batch = getAdminDb().batch();
+  await writeHistoryEntry(opts.ref, opts.track, now, batch);
   await deleteTrackAndVotes(opts.ref, opts.track.id, batch);
   batch.set(
     opts.ref,

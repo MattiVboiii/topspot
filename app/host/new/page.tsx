@@ -5,6 +5,7 @@ import {
   markHowItWorksSeen,
   useHowItWorksDismissed,
 } from "@/components/party/how-it-works";
+import { useT } from "@/lib/i18n/provider";
 import type { GuestMode } from "@/lib/types/party";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -12,6 +13,7 @@ import { useEffect, useState } from "react";
 const HOST_HOWTO_KEY = "topspot_host_howto_v1";
 
 export default function NewPartyPage() {
+  const t = useT();
   const router = useRouter();
   const [guestMode, setGuestMode] = useState<GuestMode>("anonymous");
   const [busy, setBusy] = useState(false);
@@ -84,7 +86,7 @@ export default function NewPartyPage() {
   if (authState === "loading") {
     return (
       <main className="flex flex-1 items-center justify-center p-8 text-white/60">
-        Checking Spotify session…
+        {t.host.checkingSession}
       </main>
     );
   }
@@ -92,15 +94,15 @@ export default function NewPartyPage() {
   if (authState === "out") {
     return (
       <main className="mx-auto flex max-w-md flex-1 flex-col justify-center gap-4 px-6 py-16 text-center">
-        <h1 className="text-2xl font-semibold text-white">Sign in required</h1>
+        <h1 className="text-2xl font-semibold text-white">{t.host.signInRequired}</h1>
         <p className="text-white/60">
-          Host a party with your Spotify Premium account.
+          {t.host.hostWithPremium}
         </p>
         <a
           href="/api/auth/spotify?intent=host&returnTo=/host/new"
           className="rounded-2xl bg-emerald-400 px-5 py-3 font-semibold text-emerald-950"
         >
-          Sign in with Spotify
+          {t.common.signInSpotify}
         </a>
       </main>
     );
@@ -111,7 +113,7 @@ export default function NewPartyPage() {
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-4 py-10">
         <HowItWorks
           role="host"
-          continueLabel="Set up party"
+          continueLabel={t.host.setupParty}
           onContinue={() => {
             markHowItWorksSeen(HOST_HOWTO_KEY);
             setHowtoJustDismissed(true);
@@ -124,16 +126,13 @@ export default function NewPartyPage() {
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-6 py-16">
       <h1 className="font-[family-name:var(--font-display)] text-4xl font-bold text-white">
-        New party
+        {t.host.newParty}
       </h1>
-      <p className="mt-3 text-white/65">
-        Choose how guests identify themselves. You can change this later in
-        Settings.
-      </p>
+      <p className="mt-3 text-white/65">{t.host.guestModeBody}</p>
 
       <fieldset className="mt-8 flex flex-col gap-3">
         <legend className="mb-2 text-sm uppercase tracking-[0.2em] text-white/50">
-          Guest identity
+          {t.settings.guestIdentity}
         </legend>
         <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-4">
           <input
@@ -144,10 +143,10 @@ export default function NewPartyPage() {
             className="mt-1"
           />
           <span>
-            <span className="block font-semibold text-white">Anonymous</span>
-            <span className="text-sm text-white/55">
-              Guests join with the code only — fastest for big rooms.
+            <span className="block font-semibold text-white">
+              {t.settings.anonymous}
             </span>
+            <span className="text-sm text-white/55">{t.host.anonymousBody}</span>
           </span>
         </label>
         <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -159,10 +158,10 @@ export default function NewPartyPage() {
             className="mt-1"
           />
           <span>
-            <span className="block font-semibold text-white">By name</span>
-            <span className="text-sm text-white/55">
-              Guests pick a display name before they can add or vote.
+            <span className="block font-semibold text-white">
+              {t.settings.named}
             </span>
+            <span className="text-sm text-white/55">{t.host.namedBody}</span>
           </span>
         </label>
       </fieldset>
@@ -175,7 +174,7 @@ export default function NewPartyPage() {
         onClick={() => void createParty()}
         className="mt-8 rounded-2xl bg-emerald-400 px-5 py-3 font-semibold text-emerald-950 disabled:opacity-50"
       >
-        {busy ? "Creating…" : "Start party"}
+        {busy ? t.host.creating : t.host.startParty}
       </button>
     </main>
   );

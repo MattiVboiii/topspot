@@ -4,7 +4,7 @@ import { touchPartyActivity } from "@/lib/party/inactivity";
 import {
   downvotesEnabled,
   netVoteCount,
-  usesDownvoteThreshold,
+  shouldRemoveForDownvoteThreshold,
 } from "@/lib/party/queue";
 import type {
   Party,
@@ -119,11 +119,11 @@ export async function POST(
     voteCount,
   });
 
-  const threshold = party.downvoteThreshold ?? null;
-  const shouldRemove =
-    usesDownvoteThreshold(downvoteMode) &&
-    typeof threshold === "number" &&
-    down >= threshold;
+  const shouldRemove = shouldRemoveForDownvoteThreshold(
+    down,
+    party.downvoteThreshold,
+    downvoteMode,
+  );
 
   if (shouldRemove) {
     batch.delete(trackRef);

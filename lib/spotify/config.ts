@@ -9,6 +9,8 @@ export const SPOTIFY_SCOPES = [
   "user-library-read",
   "playlist-read-private",
   "playlist-read-collaborative",
+  "playlist-modify-private",
+  "playlist-modify-public",
 ].join(" ");
 
 export const SPOTIFY_AUTH_URL = "https://accounts.spotify.com/authorize";

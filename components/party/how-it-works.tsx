@@ -1,5 +1,7 @@
 "use client";
 
+import { LocaleToggle } from "@/components/locale-toggle";
+import { useT } from "@/lib/i18n/provider";
 import { useSyncExternalStore } from "react";
 
 type Role = "host" | "guest";
@@ -8,27 +10,6 @@ type Props = {
   role: Role;
   onContinue: () => void;
   continueLabel?: string;
-};
-
-const COPY: Record<Role, { title: string; points: string[] }> = {
-  host: {
-    title: "How hosting works",
-    points: [
-      "You need Spotify Premium. Playback runs in this browser tab — keep it open.",
-      "Share the party code or QR so guests can join from their phones.",
-      "Guests add requests and vote. Requests always play before fallback tracks.",
-      "In Settings you can add a fallback playlist, toggle downvotes, see who’s here, or hand music control to a Premium guest (you stay the owner).",
-    ],
-  },
-  guest: {
-    title: "How joining works",
-    points: [
-      "Search for songs (or connect Spotify to add from your Liked songs) and add them to the queue.",
-      "Vote to bump tracks up. If the host enabled downvotes, you can downvote too.",
-      "Requests always play before the host’s fallback playlist — your picks jump the line after the current song.",
-      "The host controls Play / Pause / Skip on their device. You don’t need Spotify Premium to join.",
-    ],
-  },
 };
 
 export function howItWorksSeen(storageKey: string): boolean {
@@ -63,20 +44,27 @@ export function useHowItWorksDismissed(storageKey: string): boolean {
 export function HowItWorks({
   role,
   onContinue,
-  continueLabel = "Continue",
+  continueLabel,
 }: Props) {
-  const copy = COPY[role];
+  const t = useT();
+  const title =
+    role === "host" ? t.howItWorks.hostTitle : t.howItWorks.guestTitle;
+  const points =
+    role === "host" ? t.howItWorks.hostPoints : t.howItWorks.guestPoints;
 
   return (
     <div className="mx-auto w-full max-w-lg rounded-3xl border border-white/10 bg-white/5 p-6">
-      <p className="text-sm font-semibold uppercase tracking-[0.25em] text-emerald-300/90">
-        TopSpot
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold uppercase tracking-[0.25em] text-emerald-300/90">
+          {t.brand}
+        </p>
+        <LocaleToggle />
+      </div>
       <h1 className="mt-3 font-[family-name:var(--font-display)] text-3xl font-bold text-white">
-        {copy.title}
+        {title}
       </h1>
       <ul className="mt-6 space-y-3">
-        {copy.points.map((point) => (
+        {points.map((point) => (
           <li
             key={point}
             className="rounded-2xl bg-black/20 px-4 py-3 text-sm leading-relaxed text-white/75"
@@ -90,7 +78,7 @@ export function HowItWorks({
         onClick={onContinue}
         className="mt-8 w-full rounded-2xl bg-emerald-400 px-5 py-3 font-semibold text-emerald-950"
       >
-        {continueLabel}
+        {continueLabel ?? t.common.continue}
       </button>
     </div>
   );

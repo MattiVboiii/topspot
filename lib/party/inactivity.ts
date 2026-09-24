@@ -36,6 +36,8 @@ export function clearedPartySessionFields(
     downvoteThreshold: null,
     fallbackPlaylistId: null,
     fallbackPlaylistName: null,
+    trackCooldownMinutes: 30,
+    maxActiveRequestsPerGuest: 3,
     playbackSpotifyId: party.hostSpotifyId,
     playbackGuestId: null,
     pendingPlaybackGuestId: null,
@@ -76,6 +78,7 @@ export async function clearPartySession(partyId: string): Promise<Party> {
   await deleteCollection(db, ref, "tracks");
   await deleteCollection(db, ref, "votes");
   await deleteCollection(db, ref, "guests");
+  await deleteCollection(db, ref, "history");
 
   const updates = clearedPartySessionFields(party, now);
   await ref.set(updates, { merge: true });

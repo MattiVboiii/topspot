@@ -25,6 +25,11 @@ service cloud.firestore {
         allow read: if true;
         allow write: if false;
       }
+
+      match /history/{trackId} {
+        allow read: if true;
+        allow write: if false;
+      }
     }
 
     match /partyCodes/{code} {

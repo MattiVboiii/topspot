@@ -1,6 +1,8 @@
 "use client";
 
+import { CoverArt } from "@/components/party/cover-art";
 import { formatDuration } from "@/lib/party/codes";
+import { useT } from "@/lib/i18n/provider";
 import type { SpotifySearchTrack } from "@/lib/types/party";
 import { useEffect, useState } from "react";
 
@@ -28,6 +30,7 @@ export function TrackSearch({
   returnTo,
   onSearchingChange,
 }: Props) {
+  const t = useT();
   const [tab, setTab] = useState<Tab>("search");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SpotifySearchTrack[]>([]);
@@ -143,7 +146,7 @@ export function TrackSearch({
               : "bg-white/10 text-white"
           }`}
         >
-          Search
+          {t.search.tabSearch}
         </button>
         <button
           type="button"
@@ -157,14 +160,14 @@ export function TrackSearch({
               : "bg-white/10 text-white"
           }`}
         >
-          Liked songs
+          {t.search.tabLikes}
         </button>
       </div>
 
       {tab === "search" && (
         <>
           <label className="sr-only" htmlFor="track-search">
-            Search tracks
+            {t.search.label}
           </label>
           <input
             id="track-search"
@@ -175,7 +178,7 @@ export function TrackSearch({
                 setResults([]);
               }
             }}
-            placeholder="Search Spotify tracks…"
+            placeholder={t.search.placeholder}
             className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-white placeholder:text-white/40 outline-none ring-emerald-400/40 focus:ring-2"
           />
         </>
@@ -183,19 +186,17 @@ export function TrackSearch({
 
       {tab === "likes" && needsSpotify && (
         <div className="rounded-xl border border-white/15 bg-black/20 p-4 text-sm text-white/70">
-          <p className="mb-3">
-            Link Spotify to browse your liked songs and add them to the queue.
-          </p>
+          <p className="mb-3">{t.search.linkSpotifyBody}</p>
           <a
             href={linkHref}
             className="inline-flex rounded-xl bg-emerald-400 px-4 py-2 font-semibold text-emerald-950"
           >
-            Connect Spotify
+            {t.search.connectSpotify}
           </a>
         </div>
       )}
 
-      {loading && <p className="text-sm text-white/50">Loading…</p>}
+      {loading && <p className="text-sm text-white/50">{t.search.loading}</p>}
       {error && <p className="text-sm text-red-300">{error}</p>}
 
       <ul className="flex max-h-72 flex-col gap-2 overflow-y-auto">
@@ -205,10 +206,9 @@ export function TrackSearch({
             className="flex items-center gap-3 rounded-xl bg-black/20 px-3 py-2"
           >
             {track.albumArtUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              <CoverArt
                 src={track.albumArtUrl}
-                alt=""
+                size={40}
                 className="h-10 w-10 rounded object-cover"
               />
             ) : (
@@ -227,19 +227,24 @@ export function TrackSearch({
               disabled={addingId === track.id}
               onClick={async () => {
                 setAddingId(track.id);
+                setError(null);
                 try {
                   await onAdd(track);
                   if (tab === "search") {
                     setQuery("");
                     setResults([]);
                   }
+                } catch (err) {
+                  setError(
+                    err instanceof Error ? err.message : t.common.add,
+                  );
                 } finally {
                   setAddingId(null);
                 }
               }}
               className="rounded-lg bg-emerald-400 px-3 py-1.5 text-sm font-semibold text-emerald-950 disabled:opacity-50"
             >
-              Add
+              {t.common.add}
             </button>
           </li>
         ))}
@@ -253,7 +258,7 @@ export function TrackSearch({
             onClick={() => setLikesOffset((o) => Math.max(0, o - 20))}
             className="flex-1 rounded-xl border border-white/15 px-3 py-2 text-sm text-white disabled:opacity-40"
           >
-            Previous
+            {t.common.previous}
           </button>
           <button
             type="button"
@@ -261,7 +266,7 @@ export function TrackSearch({
             onClick={() => setLikesOffset((o) => o + 20)}
             className="flex-1 rounded-xl border border-white/15 px-3 py-2 text-sm text-white disabled:opacity-40"
           >
-            Next
+            {t.common.next}
           </button>
         </div>
       )}

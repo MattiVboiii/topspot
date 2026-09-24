@@ -6,6 +6,7 @@ import { sortPartyQueue } from "@/lib/party/queue";
 import type {
   Party,
   PartyGuest,
+  PartyHistoryEntry,
   PartyTrack,
   SpotifySearchTrack,
   TrackSource,
@@ -101,8 +102,64 @@ export async function POST(
     existingSnaps.filter((s) => s.exists).forEach((s) => existingIds.add(s.id));
   }
 
+  const cooldownMinutes =
+    typeof party.trackCooldownMinutes === "number"
+      ? party.trackCooldownMinutes
+      : 30;
+  const cooldownMs = Math.max(0, cooldownMinutes) * 60_000;
+  const onCooldown = new Set<string>();
+
+  if (source === "request" && cooldownMs > 0 && ids.length > 0) {
+    const historySnaps = await db.getAll(
+      ...ids.map((id) => partyRef.collection("history").doc(id)),
+    );
+    const now = Date.now();
+    for (const snap of historySnaps) {
+      if (!snap.exists) continue;
+      const entry = snap.data() as PartyHistoryEntry;
+      if (now - (entry.playedAt ?? 0) < cooldownMs) {
+        onCooldown.add(snap.id);
+      }
+    }
+  }
+
+  if (source === "request") {
+    const maxActive =
+      typeof party.maxActiveRequestsPerGuest === "number"
+        ? party.maxActiveRequestsPerGuest
+        : 3;
+    if (maxActive > 0) {
+      const queueSnap = await partyRef.collection("tracks").get();
+      const activeCount = queueSnap.docs.filter((doc) => {
+        const t = doc.data() as PartyTrack;
+        return (
+          (t.source === "request" || !t.source) && t.addedBy === guest.guestId
+        );
+      }).length;
+      const wouldAdd = incoming.filter(
+        (item) =>
+          !existingIds.has(item.id) &&
+          party.nowPlaying?.id !== item.id &&
+          party.nowPlayingTrackId !== item.id &&
+          !onCooldown.has(item.id),
+      ).length;
+      if (activeCount + wouldAdd > maxActive) {
+        return NextResponse.json(
+          {
+            error: `You can have at most ${maxActive} active request${maxActive === 1 ? "" : "s"} in the queue`,
+            code: "GUEST_REQUEST_LIMIT",
+            maxActiveRequestsPerGuest: maxActive,
+            activeCount,
+          },
+          { status: 429 },
+        );
+      }
+    }
+  }
+
   const added: PartyTrack[] = [];
   const skipped: string[] = [];
+  const cooldownSkipped: string[] = [];
   const now = Date.now();
   let batch = db.batch();
   let ops = 0;
@@ -122,6 +179,11 @@ export async function POST(
       party.nowPlayingTrackId === item.id
     ) {
       skipped.push(item.id);
+      continue;
+    }
+
+    if (source === "request" && onCooldown.has(item.id)) {
+      cooldownSkipped.push(item.id);
       continue;
     }
 
@@ -166,6 +228,22 @@ export async function POST(
   }
   await flush();
 
+  if (
+    added.length === 0 &&
+    cooldownSkipped.length > 0 &&
+    skipped.length === 0
+  ) {
+    return NextResponse.json(
+      {
+        error: `That track was played recently. Try again in about ${cooldownMinutes} minute${cooldownMinutes === 1 ? "" : "s"}.`,
+        code: "TRACK_COOLDOWN",
+        trackCooldownMinutes: cooldownMinutes,
+        skipped: cooldownSkipped,
+      },
+      { status: 409 },
+    );
+  }
+
   if (added.length > 0) {
     await touchPartyActivity(partyId, now);
   }
@@ -175,6 +253,7 @@ export async function POST(
     track: added[0] ?? null,
     alreadyQueued: added.length === 0 && skipped.length > 0,
     skipped,
+    cooldownSkipped,
   });
 }
 

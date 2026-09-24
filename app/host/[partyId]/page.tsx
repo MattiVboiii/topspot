@@ -1,5 +1,6 @@
 "use client";
 
+import { LocaleToggle } from "@/components/locale-toggle";
 import { HostPlayerBar } from "@/components/party/host-player-bar";
 import { HostSettingsPanel } from "@/components/party/host-settings-panel";
 import {
@@ -10,15 +11,17 @@ import {
 import { PartyInvitePanel } from "@/components/party/party-invite-panel";
 import { QueueList } from "@/components/party/queue-list";
 import { TrackSearch } from "@/components/party/track-search";
+import { UpNextBanner } from "@/components/party/up-next-banner";
 import { useGuestAuth } from "@/lib/hooks/use-guest-auth";
 import { useGuestPresence } from "@/lib/hooks/use-guest-presence";
 import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
 import { useSpotifyPlayer } from "@/lib/hooks/use-spotify-player";
-import { isGuestOnline } from "@/lib/party/queue";
+import { fill, useT } from "@/lib/i18n/provider";
+import { isGuestOnline, nextQueueTrack } from "@/lib/party/queue";
 import type { SpotifySearchTrack } from "@/lib/types/party";
-import { QrCodeIcon, SettingsIcon } from "lucide-react";
+import { QrCodeIcon, SettingsIcon, TvIcon } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Script from "next/script";
 import {
   useCallback,
@@ -33,8 +36,10 @@ const HOST_HOWTO_KEY = "topspot_host_howto_v1";
 const AUTO_LINK_KEY = "topspot_auto_link_device";
 
 export default function HostPartyPage() {
+  const t = useT();
   const params = useParams<{ partyId: string }>();
   const partyId = params.partyId;
+  const router = useRouter();
   const [authState, setAuthState] = useState<"loading" | "in" | "out">(
     "loading",
   );
@@ -90,7 +95,6 @@ export default function HostPartyPage() {
   });
   const linkingRef = useRef(false);
   const autoLinkRef = useRef(false);
-  const prevCanControlDeviceRef = useRef(false);
   const sdkActiveDeviceRef = useRef(false);
   const partyPausedRef = useRef(true);
   const linkBrowserDeviceRef = useRef<
@@ -108,6 +112,12 @@ export default function HostPartyPage() {
   useEffect(() => {
     partyPausedRef.current = Boolean(party?.isPaused || !party?.nowPlaying);
   }, [party?.isPaused, party?.nowPlaying]);
+
+  useEffect(() => {
+    if (party && party.isActive === false) {
+      router.replace(`/host/${partyId}/recap`);
+    }
+  }, [party, partyId, router]);
 
   useGuestPresence({
     partyId,
@@ -291,7 +301,7 @@ export default function HostPartyPage() {
         setDeviceLinked(linked);
         setActiveDeviceName(
           linked
-            ? (data.activeDeviceName ?? "TopSpot Party Player")
+            ? (data.activeDeviceName ?? t.player.deviceName)
             : (data.activeDeviceName ?? null),
         );
 
@@ -314,7 +324,7 @@ export default function HostPartyPage() {
         if (opts?.manual) setDeviceCheckBusy(false);
       }
     },
-    [browserDeviceId, partyId],
+    [browserDeviceId, partyId, t.player.deviceName],
   );
 
   const linkBrowserDevice = useCallback(
@@ -340,7 +350,7 @@ export default function HostPartyPage() {
         };
         if (!res.ok) throw new Error(data.error || "Could not link browser");
         setDeviceLinked(true);
-        setActiveDeviceName("TopSpot Party Player");
+        setActiveDeviceName(t.player.deviceName);
         if (!opts?.silent) await checkDeviceLink();
       } catch (err) {
         if (!opts?.silent) {
@@ -353,7 +363,7 @@ export default function HostPartyPage() {
         if (!opts?.silent) setBusy(false);
       }
     },
-    [browserDeviceId, partyId, checkDeviceLink],
+    [browserDeviceId, partyId, checkDeviceLink, t.player.deviceName],
   );
 
   useEffect(() => {
@@ -369,27 +379,33 @@ export default function HostPartyPage() {
     : null;
   const activeDeviceNameForUi = canControlDevice
     ? deviceLinkedForUi
-      ? (activeDeviceName ?? "TopSpot Party Player")
+      ? (activeDeviceName ?? t.player.deviceName)
       : activeDeviceName
     : null;
 
-  useEffect(() => {
-    if (
-      !playerReady ||
-      playerStatus === "connecting" ||
-      playerStatus === "loading_sdk"
-    ) {
+  const playerConnecting =
+    !playerReady ||
+    playerStatus === "connecting" ||
+    playerStatus === "loading_sdk";
+  const [linkGate, setLinkGate] = useState({
+    connecting: playerConnecting,
+    controlling: canControlDevice,
+  });
+  if (
+    linkGate.connecting !== playerConnecting ||
+    linkGate.controlling !== canControlDevice
+  ) {
+    const gainedControl =
+      canControlDevice && !linkGate.controlling && !playerConnecting;
+    setLinkGate({
+      connecting: playerConnecting,
+      controlling: canControlDevice,
+    });
+    if (playerConnecting || gainedControl) {
       setDeviceLinked(null);
       setActiveDeviceName(null);
-      prevCanControlDeviceRef.current = false;
-      return;
     }
-    if (canControlDevice && !prevCanControlDeviceRef.current) {
-      setDeviceLinked(null);
-      setActiveDeviceName(null);
-    }
-    prevCanControlDeviceRef.current = canControlDevice;
-  }, [canControlDevice, playerReady, playerStatus]);
+  }
 
   function onAutoLinkChange(enabled: boolean) {
     setAutoLink(enabled);
@@ -488,7 +504,7 @@ export default function HostPartyPage() {
   if (authState === "loading") {
     return (
       <main className="flex flex-1 items-center justify-center p-8 text-white/60">
-        Loading…
+        {t.common.loading}
       </main>
     );
   }
@@ -496,14 +512,12 @@ export default function HostPartyPage() {
   if (authState === "out") {
     return (
       <main className="mx-auto flex max-w-md flex-1 flex-col justify-center gap-4 px-6 py-16 text-center">
-        <p className="text-white/70">
-          Sign in as the host to control this party.
-        </p>
+        <p className="text-white/70">{t.host.signInPrompt}</p>
         <a
           href={`/api/auth/spotify?intent=host&returnTo=${encodeURIComponent(`/host/${partyId}`)}`}
           className="rounded-2xl bg-emerald-400 px-5 py-3 font-semibold text-emerald-950"
         >
-          Sign in with Spotify
+          {t.common.signInSpotify}
         </a>
       </main>
     );
@@ -514,7 +528,7 @@ export default function HostPartyPage() {
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-4 py-10">
         <HowItWorks
           role="host"
-          continueLabel="Open host dashboard"
+          continueLabel={t.host.openDashboard}
           onContinue={() => {
             markHowItWorksSeen(HOST_HOWTO_KEY);
             setHowtoJustDismissed(true);
@@ -527,7 +541,7 @@ export default function HostPartyPage() {
   if (!party) {
     return (
       <main className="flex flex-1 items-center justify-center p-8 text-white/60">
-        {realtimeError || guestError || "Loading party…"}
+        {realtimeError || guestError || t.common.loading}
       </main>
     );
   }
@@ -535,18 +549,22 @@ export default function HostPartyPage() {
   if (!isOwner && !isController) {
     return (
       <main className="mx-auto flex max-w-md flex-1 flex-col justify-center gap-4 px-6 py-16 text-center">
-        <p className="text-white/70">
-          You&apos;re signed in, but this party belongs to another Spotify
-          account. Join with the party code as a guest, or sign in as the owner.
-        </p>
+        <p className="text-white/70">{t.host.wrongAccount}</p>
         <Link href="/" className="text-emerald-300 underline">
-          Back home
+          {t.common.backHome}
         </Link>
       </main>
     );
   }
 
   const controllerLabel = guests.find((g) => g.id === party.playbackGuestId);
+  const myNextTrack =
+    guestId && party.nowPlaying
+      ? (() => {
+          const next = nextQueueTrack(tracks);
+          return next?.addedBy === guestId ? next : null;
+        })()
+      : null;
 
   return (
     <>
@@ -569,15 +587,25 @@ export default function HostPartyPage() {
               ← TopSpot
             </Link>
             <h1 className="mt-2 font-(family-name:--font-display) text-2xl font-bold text-white sm:text-3xl">
-              {isOwner ? "Host" : "Music control"} · {party.code}
+              {isOwner ? t.host.roleHost : t.host.roleMusic} · {party.code}
             </h1>
             <p className="truncate text-sm text-white/60">
               {isOwner
-                ? `Owned by ${party.hostDisplayName}`
-                : `Playing for ${party.hostDisplayName}'s party`}
+                ? fill(t.host.ownedBy, { name: party.hostDisplayName })
+                : fill(t.host.playingFor, { name: party.hostDisplayName })}
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
+            <LocaleToggle />
+            <a
+              href={`/display/${party.code}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-xl border border-white/15 px-3 py-2 text-sm font-semibold text-white"
+              title={t.host.openTv}
+            >
+              <TvIcon className="size-4" />
+            </a>
             <button
               type="button"
               onClick={() => setShowQr(true)}
@@ -600,61 +628,66 @@ export default function HostPartyPage() {
         {isOwner && !isController && (
           <section className="rounded-2xl border border-amber-400/40 bg-amber-500/10 p-4">
             <p className="font-semibold text-amber-100">
-              Music control is with{" "}
-              {controllerLabel?.spotifyDisplayName ||
-                controllerLabel?.displayName ||
-                "a guest"}
+              {fill(t.host.musicWith, {
+                name:
+                  controllerLabel?.spotifyDisplayName ||
+                  controllerLabel?.displayName ||
+                  t.common.guest,
+              })}
             </p>
-            <p className="mt-1 text-sm text-amber-100/80">
-              You still own this party and can change settings anytime.
-            </p>
+            <p className="mt-1 text-sm text-amber-100/80">{t.host.stillOwn}</p>
             <button
               type="button"
               disabled={busy}
               onClick={() => void reclaimControl()}
               className="mt-3 rounded-xl bg-amber-300 px-4 py-2 text-sm font-semibold text-amber-950 disabled:opacity-50"
             >
-              Take music control back
+              {t.host.takeMusicBack}
             </button>
           </section>
         )}
 
-        <div className="sticky top-0 z-20">
-          {isController ? (
-            <HostPlayerBar
-              key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
-              mode="controller"
-              party={party}
-              livePositionMs={playerReady ? positionMs : null}
-              isPaused={party.isPaused || !party.nowPlaying}
-              playerReady={playerReady}
-              busy={busy}
-              status={playerStatus}
-              deviceLinked={deviceLinkedForUi}
-              activeDeviceName={activeDeviceNameForUi}
-              deviceCheckBusy={deviceCheckBusy}
-              autoLink={autoLink}
-              onPlay={() => void control("play")}
-              onPause={() => void control("pause")}
-              onSkip={() => void control("skip")}
-              onCheckDevice={() => void checkDeviceLink({ manual: true })}
-              onLinkDevice={() => void linkBrowserDevice()}
-              onAutoLinkChange={onAutoLinkChange}
-              error={actionError || playerError}
-              showPlayerHint
-            />
-          ) : (
-            <HostPlayerBar
-              key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
-              mode="readonly"
-              party={party}
-              readonlyMessage="Controls on another device"
-            />
-          )}
+        <div className="sticky top-0 z-20 -mx-4 overflow-hidden border-y border-white/10 bg-white/[0.06] backdrop-blur-xl backdrop-saturate-150 sm:mx-0 sm:rounded-2xl sm:border">
+          {myNextTrack && <UpNextBanner trackName={myNextTrack.name} />}
+          <div className="[&>section]:rounded-none [&>section]:border-0 [&>section]:bg-transparent [&>section]:backdrop-blur-none">
+            {isController ? (
+              <HostPlayerBar
+                key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
+                mode="controller"
+                party={party}
+                livePositionMs={playerReady ? positionMs : null}
+                isPaused={party.isPaused || !party.nowPlaying}
+                playerReady={playerReady}
+                busy={busy}
+                status={playerStatus}
+                deviceLinked={deviceLinkedForUi}
+                activeDeviceName={activeDeviceNameForUi}
+                deviceCheckBusy={deviceCheckBusy}
+                autoLink={autoLink}
+                onPlay={() => void control("play")}
+                onPause={() => void control("pause")}
+                onSkip={() => void control("skip")}
+                onCheckDevice={() => void checkDeviceLink({ manual: true })}
+                onLinkDevice={() => void linkBrowserDevice()}
+                onAutoLinkChange={onAutoLinkChange}
+                error={actionError || playerError}
+                showPlayerHint
+              />
+            ) : (
+              <HostPlayerBar
+                key={`${party.nowPlaying?.id ?? "none"}-${party.playbackUpdatedAt}-${party.isPaused}`}
+                mode="readonly"
+                party={party}
+                readonlyMessage={t.player.controlsElsewhere}
+              />
+            )}
+          </div>
         </div>
 
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <h2 className="mb-3 text-lg font-semibold text-white">Add tracks</h2>
+          <h2 className="mb-3 text-lg font-semibold text-white">
+            {t.host.addTracks}
+          </h2>
           <TrackSearch
             partyId={partyId}
             onAdd={onAdd}
@@ -668,9 +701,14 @@ export default function HostPartyPage() {
 
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-white">Queue</h2>
+            <h2 className="text-lg font-semibold text-white">
+              {t.queue.title}
+            </h2>
             <p className="text-xs text-white/45">
-              {onlineGuests.length} online · {guests.length} joined
+              {fill(t.queue.onlineJoined, {
+                online: onlineGuests.length,
+                joined: guests.length,
+              })}
             </p>
           </div>
           <QueueList
@@ -686,7 +724,7 @@ export default function HostPartyPage() {
 
       {settingsOpen && isOwner && (
         <HostSettingsPanel
-          key={`${party.guestMode}-${party.downvoteMode}-${party.downvoteThreshold}`}
+          key={`${party.guestMode}-${party.downvoteMode}-${party.downvoteThreshold}-${party.trackCooldownMinutes}-${party.maxActiveRequestsPerGuest}`}
           party={party}
           partyId={partyId}
           guests={guests}
@@ -699,13 +737,15 @@ export default function HostPartyPage() {
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 sm:items-center sm:p-4">
           <div className="flex max-h-[min(92dvh,100%)] w-full max-w-sm flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-[#0b1520] sm:max-h-[min(88dvh,720px)] sm:rounded-3xl">
             <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
-              <h2 className="font-semibold text-white">Invite guests</h2>
+              <h2 className="font-semibold text-white">
+                {t.common.inviteGuests}
+              </h2>
               <button
                 type="button"
                 onClick={() => setShowQr(false)}
                 className="text-white/60"
               >
-                Close
+                {t.common.close}
               </button>
             </div>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">

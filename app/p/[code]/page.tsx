@@ -1,5 +1,6 @@
 "use client";
 
+import { LocaleToggle } from "@/components/locale-toggle";
 import { GuestNameGate } from "@/components/party/guest-name-gate";
 import { HostTransferBanner } from "@/components/party/host-transfer-banner";
 import {
@@ -8,12 +9,16 @@ import {
   useHowItWorksDismissed,
 } from "@/components/party/how-it-works";
 import { NowPlayingBar } from "@/components/party/now-playing-bar";
+import { PartyRecapView } from "@/components/party/party-recap-view";
 import { QrCard } from "@/components/party/qr-card";
 import { QueueList } from "@/components/party/queue-list";
 import { TrackSearch } from "@/components/party/track-search";
+import { UpNextBanner } from "@/components/party/up-next-banner";
 import { useGuestAuth } from "@/lib/hooks/use-guest-auth";
 import { useGuestPresence } from "@/lib/hooks/use-guest-presence";
 import { usePartyRealtime } from "@/lib/hooks/use-party-realtime";
+import { fill, useT } from "@/lib/i18n/provider";
+import { nextQueueTrack } from "@/lib/party/queue";
 import type { Party, SpotifySearchTrack } from "@/lib/types/party";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -22,6 +27,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 const GUEST_HOWTO_KEY = "topspot_guest_howto_v1";
 
 export default function GuestPartyPage() {
+  const t = useT();
   const params = useParams<{ code: string }>();
   const code = (params.code || "").toUpperCase();
   const { ready, user, getIdToken, error: authError } = useGuestAuth();
@@ -112,6 +118,9 @@ export default function GuestPartyPage() {
         }
         if (cancelled) return;
         setPartyMeta(data.party);
+        if (!data.party.isActive) {
+          return;
+        }
         if (data.party.guestMode === "named") {
           setGateNeeded(true);
         } else {
@@ -196,7 +205,7 @@ export default function GuestPartyPage() {
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-4 py-10">
         <HowItWorks
           role="guest"
-          continueLabel={`Join party ${code}`}
+          continueLabel={fill(t.guest.joinParty, { code })}
           onContinue={() => {
             markHowItWorksSeen(GUEST_HOWTO_KEY);
             setHowtoJustDismissed(true);
@@ -211,20 +220,30 @@ export default function GuestPartyPage() {
       <main className="mx-auto flex max-w-md flex-1 flex-col justify-center gap-4 px-6 py-16 text-center">
         <p className="text-red-300">{loadError || authError}</p>
         <Link href="/" className="text-emerald-300 underline">
-          Back home
+          {t.common.backHome}
         </Link>
       </main>
     );
   }
 
   if (!ready || !partyMeta || (gateNeeded && !joined)) {
+    if (partyMeta && !partyMeta.isActive) {
+      return (
+        <PartyRecapView
+          partyId={partyMeta.id}
+          code={partyMeta.code}
+          hostDisplayName={partyMeta.hostDisplayName}
+          homeHref="/"
+        />
+      );
+    }
     return (
       <main className="mx-auto flex w-full max-w-lg flex-1 flex-col justify-center px-6 py-12">
         <Link href="/" className="mb-6 text-sm text-emerald-300/80">
           ← TopSpot
         </Link>
         <p className="mb-2 text-sm uppercase tracking-[0.25em] text-white/50">
-          Party {code}
+          {fill(t.guest.partyHeading, { code })}
         </p>
         {gateNeeded ? (
           <GuestNameGate
@@ -233,13 +252,30 @@ export default function GuestPartyPage() {
             }}
           />
         ) : (
-          <p className="text-white/60">Joining party…</p>
+          <p className="text-white/60">{t.guest.joining}</p>
         )}
       </main>
     );
   }
 
   const live = party ?? partyMeta;
+  if (!live.isActive) {
+    return (
+      <PartyRecapView
+        partyId={live.id}
+        code={live.code}
+        hostDisplayName={live.hostDisplayName}
+        homeHref="/"
+      />
+    );
+  }
+  const myNextTrack =
+    guestId && live?.nowPlaying
+      ? (() => {
+          const next = nextQueueTrack(tracks);
+          return next?.addedBy === guestId ? next : null;
+        })()
+      : null;
 
   return (
     <>
@@ -249,18 +285,23 @@ export default function GuestPartyPage() {
             <Link href="/" className="text-sm text-emerald-300/80">
               ← TopSpot
             </Link>
-            <h1 className="mt-2 font-[family-name:var(--font-display)] text-3xl font-bold text-white">
-              Party {live.code}
+            <h1 className="mt-2 font-(family-name:--font-display) text-3xl font-bold text-white">
+              {fill(t.guest.partyHeading, { code: live.code })}
             </h1>
-            <p className="text-white/55">Hosted by {live.hostDisplayName}</p>
+            <p className="text-white/55">
+              {fill(t.guest.hostedBy, { name: live.hostDisplayName })}
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowQr(true)}
-            className="shrink-0 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white"
-          >
-            Invite
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <LocaleToggle />
+            <button
+              type="button"
+              onClick={() => setShowQr(true)}
+              className="shrink-0 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white"
+            >
+              {t.common.invite}
+            </button>
+          </div>
         </header>
 
         <HostTransferBanner
@@ -269,15 +310,18 @@ export default function GuestPartyPage() {
           getIdToken={getIdToken}
         />
 
-        <div className="sticky top-0 z-20">
-          <NowPlayingBar
-            key={`${live.nowPlaying?.id ?? "none"}-${live.playbackUpdatedAt}-${live.isPaused}`}
-            party={live}
-          />
+        <div className="sticky top-0 z-20 -mx-4 overflow-hidden border-y border-white/10 bg-white/[0.06] backdrop-blur-xl backdrop-saturate-150 sm:mx-0 sm:rounded-2xl sm:border">
+          {myNextTrack && <UpNextBanner trackName={myNextTrack.name} />}
+          <div className="[&>section]:rounded-none [&>section]:border-0 [&>section]:bg-transparent [&>section]:backdrop-blur-none">
+            <NowPlayingBar
+              key={`${live.nowPlaying?.id ?? "none"}-${live.playbackUpdatedAt}-${live.isPaused}`}
+              party={live}
+            />
+          </div>
         </div>
 
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <h2 className="mb-3 font-semibold text-white">Add a track</h2>
+          <h2 className="mb-3 font-semibold text-white">{t.guest.addTrack}</h2>
           <TrackSearch
             partyId={live.id}
             onAdd={onAdd}
@@ -290,7 +334,7 @@ export default function GuestPartyPage() {
         </section>
 
         <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <h2 className="mb-3 font-semibold text-white">Queue</h2>
+          <h2 className="mb-3 font-semibold text-white">{t.queue.title}</h2>
           {realtimeError && (
             <p className="mb-2 text-sm text-amber-200">{realtimeError}</p>
           )}
@@ -307,13 +351,15 @@ export default function GuestPartyPage() {
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4">
           <div className="w-full max-w-sm rounded-t-3xl border border-white/10 bg-[#0b1520] p-4 sm:rounded-3xl">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="font-semibold text-white">Invite guests</h2>
+              <h2 className="font-semibold text-white">
+                {t.common.inviteGuests}
+              </h2>
               <button
                 type="button"
                 onClick={() => setShowQr(false)}
                 className="text-white/60"
               >
-                Close
+                {t.common.close}
               </button>
             </div>
             <QrCard joinUrl={joinUrl} code={live.code} />

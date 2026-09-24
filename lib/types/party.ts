@@ -42,12 +42,38 @@ export type Party = {
   downvoteThreshold: number | null;
   fallbackPlaylistId: string | null;
   fallbackPlaylistName: string | null;
+  /** Minutes before a played track can be requested again. 0 = only while queued/playing. */
+  trackCooldownMinutes: number;
+  /** Max request tracks a guest may have in the queue at once. 0 = unlimited. */
+  maxActiveRequestsPerGuest: number;
   /** Spotify account currently allowed to control playback (defaults to owner). */
   playbackSpotifyId: string;
   /** Guest doc id of current music controller, if a guest. */
   playbackGuestId: string | null;
   /** Guest invited to take music control (not ownership). */
   pendingPlaybackGuestId: string | null;
+};
+
+/** Snapshot written when a track is promoted to now playing. */
+export type PartyHistoryEntry = {
+  id: string;
+  trackId: string;
+  name: string;
+  artists: string;
+  albumName: string;
+  albumArtUrl: string | null;
+  durationMs: number;
+  uri: string;
+  source: TrackSource;
+  upVoteCount: number;
+  downVoteCount: number;
+  voteCount: number;
+  addedBy: string;
+  addedByName: string | null;
+  playedAt: number;
+  playCount: number;
+  peakUpVoteCount: number;
+  peakVoteCount: number;
 };
 
 export type PartyTrack = {

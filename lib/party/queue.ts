@@ -68,6 +68,19 @@ export function netVoteCount(
   return up;
 }
 
+/** Raw down-vote count vs party threshold (not net score). */
+export function shouldRemoveForDownvoteThreshold(
+  downCount: number,
+  threshold: number | null | undefined,
+  mode: DownvoteMode,
+): boolean {
+  return (
+    usesDownvoteThreshold(mode) &&
+    typeof threshold === "number" &&
+    downCount >= threshold
+  );
+}
+
 /** Guest progress: baseline + wall-clock since last play/resume/pause write. */
 export function resolvePlaybackPosition(
   party: Pick<
@@ -110,6 +123,14 @@ export function normalizeParty(raw: Party): Party {
     playbackStartedAt: raw.playbackStartedAt ?? null,
     downvoteMode: raw.downvoteMode ?? "off",
     downvoteThreshold: raw.downvoteThreshold ?? null,
+    trackCooldownMinutes:
+      typeof raw.trackCooldownMinutes === "number"
+        ? raw.trackCooldownMinutes
+        : 30,
+    maxActiveRequestsPerGuest:
+      typeof raw.maxActiveRequestsPerGuest === "number"
+        ? raw.maxActiveRequestsPerGuest
+        : 3,
     fallbackPlaylistId: raw.fallbackPlaylistId ?? null,
     fallbackPlaylistName: raw.fallbackPlaylistName ?? null,
     playbackSpotifyId: raw.playbackSpotifyId || raw.hostSpotifyId,

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { LocaleProvider } from "@/lib/i18n/provider";
 import { DM_Sans, Geist_Mono, Syne } from "next/font/google";
 import "./globals.css";
 
@@ -57,7 +58,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${display.variable} ${body.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="party-shell min-h-full flex flex-col font-[family-name:var(--font-body)]">
-        {children}
+        <LocaleProvider>{children}</LocaleProvider>
       </body>
     </html>
   );

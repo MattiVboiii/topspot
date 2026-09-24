@@ -1,6 +1,8 @@
 "use client";
 
+import { CoverArt } from "@/components/party/cover-art";
 import { formatDuration } from "@/lib/party/codes";
+import { useT } from "@/lib/i18n/provider";
 import { resolvePlaybackPosition } from "@/lib/party/queue";
 import type { Party } from "@/lib/types/party";
 import { useEffect, useState } from "react";
@@ -12,6 +14,7 @@ type Props = {
 };
 
 export function NowPlayingBar({ party, livePositionMs }: Props) {
+  const t = useT();
   const nowPlaying = party.nowPlaying;
   const trackId = nowPlaying?.id ?? null;
   const isPaused = party.isPaused;
@@ -40,10 +43,12 @@ export function NowPlayingBar({ party, livePositionMs }: Props) {
     return (
       <section className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 backdrop-blur-xl backdrop-saturate-150">
         <p className="text-xs uppercase tracking-[0.2em] text-white/45">
-          Now playing
+          {t.nowPlaying.label}
         </p>
-        <p className="mt-1 text-xl font-semibold text-white">Nothing yet</p>
-        <p className="text-sm text-white/55">Add tracks and hit Play</p>
+        <p className="mt-1 text-xl font-semibold text-white">
+          {t.nowPlaying.nothingYet}
+        </p>
+        <p className="text-sm text-white/55">{t.nowPlaying.addAndPlay}</p>
       </section>
     );
   }
@@ -59,10 +64,9 @@ export function NowPlayingBar({ party, livePositionMs }: Props) {
     <section className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 backdrop-blur-xl backdrop-saturate-150">
       <div className="flex items-center gap-3">
         {nowPlaying.albumArtUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <CoverArt
             src={nowPlaying.albumArtUrl}
-            alt=""
+            size={56}
             className="h-14 w-14 shrink-0 rounded-lg object-cover"
           />
         ) : (
@@ -70,8 +74,10 @@ export function NowPlayingBar({ party, livePositionMs }: Props) {
         )}
         <div className="min-w-0 flex-1">
           <p className="text-xs uppercase tracking-[0.2em] text-white/45">
-            Now playing
-            {nowPlaying.source === "fallback" ? " · Fallback" : " · Request"}
+            {t.nowPlaying.label}
+            {nowPlaying.source === "fallback"
+              ? ` · ${t.nowPlaying.fallback}`
+              : ` · ${t.nowPlaying.request}`}
           </p>
           <p className="truncate text-xl font-semibold text-white">
             {nowPlaying.name}

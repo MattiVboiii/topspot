@@ -1,6 +1,9 @@
 "use client";
 
+import { CoverArt } from "@/components/party/cover-art";
 import { formatDuration } from "@/lib/party/codes";
+import { fill, useT } from "@/lib/i18n/provider";
+import type { Dictionary } from "@/lib/i18n/types";
 import { resolvePlaybackPosition } from "@/lib/party/queue";
 import type { Party } from "@/lib/types/party";
 import { Pause, Play, SkipForward } from "lucide-react";
@@ -38,57 +41,62 @@ type BaseProps = {
 
 type Props = BaseProps & (ControllerProps | ReadonlyProps);
 
-function statusLabel(status?: string, ready?: boolean): string | null {
+function statusLabel(
+  t: Dictionary,
+  status?: string,
+  ready?: boolean,
+): string | null {
   if (ready) return null;
   switch (status) {
     case "loading_sdk":
-      return "Loading Spotify SDK…";
+      return t.player.loadingSdk;
     case "connecting":
-      return "Connecting Spotify player…";
+      return t.player.connecting;
     case "not_ready":
-      return "Player went offline — refresh the page";
+      return t.player.offline;
     case "token_error":
     case "auth_error":
-      return "Spotify auth failed — try signing in again";
+      return t.player.authFailed;
     case "account_error":
-      return "Spotify Premium is required for playback";
+      return t.player.premiumRequired;
     case "init_error":
     case "connect_failed":
     case "error":
-      return "Player failed to start — refresh and try again";
+      return t.player.failedStart;
     default:
-      return "Connecting Spotify player…";
+      return t.player.connecting;
   }
 }
 
 function linkCopy(
+  t: Dictionary,
   deviceLinked: boolean | null,
   activeDeviceName: string | null,
 ): { title: string; detail: string; tone: "ok" | "warn" | "idle" } {
   if (deviceLinked === null) {
     return {
-      title: "Checking link…",
-      detail: "Seeing if this browser is Spotify’s active player",
+      title: t.player.checkingLink,
+      detail: t.player.checkingLinkHint,
       tone: "idle",
     };
   }
   if (deviceLinked) {
     return {
-      title: "Browser linked",
-      detail: "Playback is aimed at this tab",
+      title: t.player.browserLinked,
+      detail: t.player.aimedAtTab,
       tone: "ok",
     };
   }
   if (activeDeviceName) {
     return {
-      title: "Not linked",
-      detail: `Spotify is on “${activeDeviceName}”`,
+      title: t.player.notLinked,
+      detail: fill(t.player.spotifyOn, { name: activeDeviceName }),
       tone: "warn",
     };
   }
   return {
-    title: "Not linked",
-    detail: "No active Spotify device right now",
+    title: t.player.notLinked,
+    detail: t.player.noActiveDevice,
     tone: "warn",
   };
 }
@@ -100,6 +108,7 @@ function PlaybackButtons({
   onPlay,
   onPause,
   onSkip,
+  labels,
 }: {
   isPaused: boolean;
   playerReady: boolean;
@@ -107,6 +116,7 @@ function PlaybackButtons({
   onPlay: () => void;
   onPause: () => void;
   onSkip: () => void;
+  labels: { play: string; pause: string; skip: string };
 }) {
   return (
     <div className="flex shrink-0 items-center gap-1.5">
@@ -115,7 +125,7 @@ function PlaybackButtons({
           type="button"
           disabled={!playerReady || busy}
           onClick={onPlay}
-          aria-label="Play"
+          aria-label={labels.play}
           className="flex size-9 items-center justify-center rounded-full bg-emerald-400 text-emerald-950 transition hover:bg-emerald-300 disabled:opacity-50"
         >
           <Play className="size-4 fill-current" />
@@ -125,7 +135,7 @@ function PlaybackButtons({
           type="button"
           disabled={!playerReady || busy}
           onClick={onPause}
-          aria-label="Pause"
+          aria-label={labels.pause}
           className="flex size-9 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25 disabled:opacity-50"
         >
           <Pause className="size-4 fill-current" />
@@ -135,7 +145,7 @@ function PlaybackButtons({
         type="button"
         disabled={!playerReady || busy}
         onClick={onSkip}
-        aria-label="Skip track"
+        aria-label={labels.skip}
         className="flex size-9 items-center justify-center rounded-full border border-white/20 text-white transition hover:bg-white/10 disabled:opacity-50"
       >
         <SkipForward className="size-4" />
@@ -145,6 +155,7 @@ function PlaybackButtons({
 }
 
 export function HostPlayerBar(props: Props) {
+  const dict = useT();
   const { party, livePositionMs } = props;
   const nowPlaying = party.nowPlaying;
   const trackId = nowPlaying?.id ?? null;
@@ -173,11 +184,11 @@ export function HostPlayerBar(props: Props) {
   const isController = props.mode === "controller";
   const controllerPaused = isController && (props.isPaused || !nowPlaying);
   const statusText = isController
-    ? statusLabel(props.status, props.playerReady)
+    ? statusLabel(dict, props.status, props.playerReady)
     : null;
   const link =
     isController && props.playerReady
-      ? linkCopy(props.deviceLinked, props.activeDeviceName)
+      ? linkCopy(dict, props.deviceLinked, props.activeDeviceName)
       : null;
 
   if (!nowPlaying) {
@@ -186,10 +197,10 @@ export function HostPlayerBar(props: Props) {
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-[0.2em] text-white/45">
-              Now playing
+              {dict.nowPlaying.label}
             </p>
-            <p className="mt-0.5 font-semibold text-white">Nothing yet</p>
-            <p className="text-xs text-white/55">Add tracks and hit Play</p>
+            <p className="mt-0.5 font-semibold text-white">{dict.nowPlaying.nothingYet}</p>
+            <p className="text-xs text-white/55">{dict.nowPlaying.addAndPlay}</p>
           </div>
           {isController && (
             <PlaybackButtons
@@ -199,6 +210,11 @@ export function HostPlayerBar(props: Props) {
               onPlay={props.onPlay}
               onPause={props.onPause}
               onSkip={props.onSkip}
+              labels={{
+                play: dict.player.play,
+                pause: dict.player.pause,
+                skip: dict.player.skip,
+              }}
             />
           )}
         </div>
@@ -223,10 +239,9 @@ export function HostPlayerBar(props: Props) {
     <section className="rounded-2xl border border-white/10 bg-white/[0.06] p-3 backdrop-blur-xl backdrop-saturate-150 sm:p-4">
       <div className="flex items-center gap-3">
         {nowPlaying.albumArtUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <CoverArt
             src={nowPlaying.albumArtUrl}
-            alt=""
+            size={48}
             className="h-11 w-11 shrink-0 rounded-md object-cover sm:h-12 sm:w-12"
           />
         ) : (
@@ -246,6 +261,11 @@ export function HostPlayerBar(props: Props) {
             onPlay={props.onPlay}
             onPause={props.onPause}
             onSkip={props.onSkip}
+            labels={{
+              play: dict.player.play,
+              pause: dict.player.pause,
+              skip: dict.player.skip,
+            }}
           />
         ) : (
           <p className="max-w-36 shrink-0 text-right text-[11px] leading-snug text-white/45">
@@ -312,7 +332,7 @@ export function HostPlayerBar(props: Props) {
                       onClick={props.onCheckDevice}
                       className="rounded-lg border border-white/15 px-2.5 py-1 text-[11px] font-semibold text-white/90 transition hover:bg-white/5 disabled:opacity-50"
                     >
-                      {props.deviceCheckBusy ? "…" : "Check"}
+                      {props.deviceCheckBusy ? "…" : dict.player.check}
                     </button>
                     <button
                       type="button"
@@ -324,7 +344,7 @@ export function HostPlayerBar(props: Props) {
                       onClick={props.onLinkDevice}
                       className="rounded-lg bg-emerald-400/90 px-2.5 py-1 text-[11px] font-semibold text-emerald-950 transition hover:bg-emerald-300 disabled:opacity-40"
                     >
-                      Use browser
+                      {dict.player.useBrowser}
                     </button>
                   </div>
                 )}
@@ -338,10 +358,10 @@ export function HostPlayerBar(props: Props) {
                 className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/10 px-2.5 py-2 text-left transition hover:bg-white/3"
               >
                 <span className="text-xs text-white/70">
-                  <span className="font-semibold text-white">Auto-link</span>
+                  <span className="font-semibold text-white">{dict.player.autoLink}</span>
                   <span className="text-white/45">
                     {" "}
-                    · {props.autoLink ? "On" : "Off"}
+                    · {props.autoLink ? dict.player.on : dict.player.off}
                   </span>
                 </span>
                 <span
@@ -365,7 +385,7 @@ export function HostPlayerBar(props: Props) {
           )}
           {props.showPlayerHint && !props.playerReady && !props.error && (
             <p className="mt-2 text-[11px] text-white/45">
-              Chrome, Edge, or Firefox · Spotify Premium · keep this tab open
+              {dict.player.hint}
             </p>
           )}
         </>

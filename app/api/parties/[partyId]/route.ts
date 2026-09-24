@@ -54,6 +54,8 @@ export async function PATCH(
     downvoteThreshold?: number | null;
     fallbackPlaylistId?: string | null;
     fallbackPlaylistName?: string | null;
+    trackCooldownMinutes?: number;
+    maxActiveRequestsPerGuest?: number;
   };
 
   const updates: Partial<Party> = {};
@@ -83,6 +85,24 @@ export async function PATCH(
   }
   if (body.fallbackPlaylistName !== undefined) {
     updates.fallbackPlaylistName = body.fallbackPlaylistName;
+  }
+  if (
+    typeof body.trackCooldownMinutes === "number" &&
+    Number.isFinite(body.trackCooldownMinutes) &&
+    body.trackCooldownMinutes >= 0 &&
+    body.trackCooldownMinutes <= 24 * 60
+  ) {
+    updates.trackCooldownMinutes = Math.floor(body.trackCooldownMinutes);
+  }
+  if (
+    typeof body.maxActiveRequestsPerGuest === "number" &&
+    Number.isFinite(body.maxActiveRequestsPerGuest) &&
+    body.maxActiveRequestsPerGuest >= 0 &&
+    body.maxActiveRequestsPerGuest <= 50
+  ) {
+    updates.maxActiveRequestsPerGuest = Math.floor(
+      body.maxActiveRequestsPerGuest,
+    );
   }
 
   if (Object.keys(updates).length > 0) {

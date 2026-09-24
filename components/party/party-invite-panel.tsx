@@ -1,8 +1,9 @@
 "use client";
 
 import { QrCard } from "@/components/party/qr-card";
+import { fill, useLocale, useT } from "@/lib/i18n/provider";
 import { Printer, Share2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 type Props = {
   joinUrl: string;
@@ -44,20 +45,28 @@ function buildPrintDocument(opts: {
   qrDataUrl: string;
   code: string;
   joinUrl: string;
-  hostName: string;
   message: string;
+  lang: string;
+  labels: {
+    joinTheParty: string;
+    hostedBy: string;
+    partyCode: string;
+    scanOrEnter: string;
+    printTitle: string;
+    qrAlt: string;
+  };
 }) {
-  const { qrDataUrl, code, joinUrl, hostName, message } = opts;
+  const { qrDataUrl, code, joinUrl, message, lang, labels } = opts;
   const trimmedMessage = message.trim();
   const messageBlock = trimmedMessage
     ? `<p class="message">${escapeHtml(trimmedMessage).replace(/\n/g, "<br />")}</p>`
     : "";
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${escapeHtml(lang)}">
 <head>
   <meta charset="utf-8" />
-  <title>Join TopSpot party ${escapeHtml(code)}</title>
+  <title>${escapeHtml(labels.printTitle)}</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -144,28 +153,33 @@ function buildPrintDocument(opts: {
 <body>
   <article class="sheet">
     <p class="brand">TopSpot</p>
-    <h1>Join the party</h1>
-    <p class="host">Hosted by ${escapeHtml(hostName)}</p>
+    <h1>${escapeHtml(labels.joinTheParty)}</h1>
+    <p class="host">${escapeHtml(labels.hostedBy)}</p>
     ${messageBlock}
-    <img class="qr" src="${qrDataUrl}" alt="QR code for party ${escapeHtml(code)}" />
-    <p class="label">Party code</p>
+    <img class="qr" src="${qrDataUrl}" alt="${escapeHtml(labels.qrAlt)}" />
+    <p class="label">${escapeHtml(labels.partyCode)}</p>
     <p class="code">${escapeHtml(code)}</p>
     <p class="url">${escapeHtml(joinUrl)}</p>
-    <p class="hint">Scan the QR code or enter the party code in TopSpot to join and add tracks.</p>
+    <p class="hint">${escapeHtml(labels.scanOrEnter)}</p>
   </article>
 </body>
 </html>`;
 }
 
 export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
+  const t = useT();
+  const { locale } = useLocale();
   const [message, setMessage] = useState(() => readStoredMessage(partyId));
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const [shareError, setShareError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
-
-  const canShare =
-    typeof navigator !== "undefined" && typeof navigator.share === "function";
+  const [shareError, setShareError] = useState<string | null>(null);
+  const canShare = useSyncExternalStore(
+    () => () => {},
+    () =>
+      typeof navigator !== "undefined" && typeof navigator.share === "function",
+    () => false,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -186,14 +200,14 @@ export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
   const sharePayload = useCallback(() => {
     const trimmed = message.trim();
     const text = trimmed
-      ? `${trimmed}\n\nParty code: ${code}`
-      : `Join ${hostName}'s party on TopSpot. Party code: ${code}`;
+      ? fill(t.invite.shareTextWithNote, { note: trimmed, code })
+      : fill(t.invite.shareText, { name: hostName, code });
     return {
-      title: `TopSpot party · ${code}`,
+      title: fill(t.invite.shareTitle, { code }),
       text,
       url: joinUrl,
     };
-  }, [message, code, hostName, joinUrl]);
+  }, [message, code, hostName, joinUrl, t]);
 
   const handleShare = useCallback(async () => {
     setShareError(null);
@@ -210,9 +224,9 @@ export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
       window.setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
-      setShareError("Could not share. Try printing or copying the link.");
+      setShareError(t.invite.shareFailed);
     }
-  }, [canShare, sharePayload]);
+  }, [canShare, sharePayload, t.invite.shareFailed]);
 
   const handlePrint = useCallback(() => {
     if (!qrDataUrl || printBusy) return;
@@ -223,8 +237,16 @@ export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
       qrDataUrl,
       code,
       joinUrl,
-      hostName,
       message,
+      lang: locale,
+      labels: {
+        joinTheParty: t.invite.joinTheParty,
+        hostedBy: fill(t.invite.hostedBy, { name: hostName }),
+        partyCode: t.invite.partyCode,
+        scanOrEnter: t.invite.scanOrEnter,
+        printTitle: fill(t.invite.printTitle, { code }),
+        qrAlt: fill(t.qr.altParty, { code }),
+      },
     });
 
     const iframe = document.createElement("iframe");
@@ -237,7 +259,7 @@ export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
     const frameDoc = frameWindow?.document;
     if (!frameWindow || !frameDoc) {
       iframe.remove();
-      setShareError("Could not open print view.");
+      setShareError(t.invite.printFailed);
       setPrintBusy(false);
       return;
     }
@@ -262,13 +284,13 @@ export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
     } else {
       iframe.onload = () => window.requestAnimationFrame(triggerPrint);
     }
-  }, [qrDataUrl, printBusy, code, joinUrl, hostName, message]);
+  }, [qrDataUrl, printBusy, code, joinUrl, hostName, message, t, locale]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <label className="block shrink-0 text-left">
         <span className="mb-1.5 block text-sm font-medium text-white/80">
-          Optional note for guests
+          {t.invite.noteLabel}
         </span>
         <textarea
           value={message}
@@ -279,7 +301,7 @@ export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
           }}
           rows={2}
           maxLength={280}
-          placeholder="e.g. Scan to join — add your favorite tracks!"
+          placeholder={t.invite.notePlaceholder}
           className="w-full resize-none rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-sm text-white placeholder:text-white/35 focus:border-emerald-400/50 focus:outline-none"
         />
         <span className="mt-1 block text-right text-xs text-white/40">
@@ -299,7 +321,11 @@ export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-emerald-950"
           >
             <Share2 className="h-4 w-4" aria-hidden />
-            {canShare ? "Share" : copied ? "Copied!" : "Copy link"}
+            {canShare
+              ? t.invite.share
+              : copied
+                ? t.invite.copied
+                : t.invite.copyLink}
           </button>
           <button
             type="button"
@@ -308,13 +334,13 @@ export function PartyInvitePanel({ joinUrl, code, hostName, partyId }: Props) {
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             <Printer className="h-4 w-4" aria-hidden />
-            {printBusy ? "Preparing…" : "Print"}
+            {printBusy ? t.invite.preparing : t.invite.print}
           </button>
         </div>
 
         {canShare && (
           <p className="text-center text-xs text-white/45">
-            On iPhone and Mac, Share includes AirDrop, Messages, and more.
+            {t.invite.shareHint}
           </p>
         )}
 

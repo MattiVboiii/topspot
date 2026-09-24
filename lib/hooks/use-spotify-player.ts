@@ -23,7 +23,18 @@ function waitForSpotifySdk(timeoutMs = 20_000): Promise<void> {
   });
 }
 
+const IDLE_PLAYER = {
+  deviceId: null as string | null,
+  ready: false,
+  error: null as string | null,
+  status: "idle",
+  positionMs: 0,
+  isActiveDevice: false,
+};
+
 export function useSpotifyPlayer(enabled: boolean, partyId: string) {
+  const sessionKey = enabled && partyId ? partyId : null;
+  const [session, setSession] = useState<string | null>(sessionKey);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +46,18 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
   const lastSkipAtRef = useRef(0);
   const registeredDeviceRef = useRef<string | null>(null);
   const lastSdkPositionRef = useRef({ position: 0, at: 0, paused: true });
+
+  if (session !== sessionKey) {
+    setSession(sessionKey);
+    if (sessionKey === null) {
+      setDeviceId(IDLE_PLAYER.deviceId);
+      setReady(IDLE_PLAYER.ready);
+      setError(IDLE_PLAYER.error);
+      setStatus(IDLE_PLAYER.status);
+      setPositionMs(IDLE_PLAYER.positionMs);
+      setIsActiveDevice(IDLE_PLAYER.isActiveDevice);
+    }
+  }
 
   const getOAuthToken = useCallback((cb: (token: string) => void) => {
     void (async () => {
@@ -58,16 +81,7 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
   }, []);
 
   useEffect(() => {
-    if (!enabled || !partyId) {
-      setDeviceId(null);
-      setReady(false);
-      setError(null);
-      setStatus("idle");
-      setPositionMs(0);
-      setIsActiveDevice(false);
-      registeredDeviceRef.current = null;
-      playerRef.current?.disconnect();
-      playerRef.current = null;
+    if (!sessionKey) {
       return;
     }
 
@@ -116,10 +130,9 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
           setError(null);
           if (registeredDeviceRef.current === device_id) return;
           registeredDeviceRef.current = device_id;
-          // Give Spotify's device list a moment to include the Web Playback device.
           window.setTimeout(() => {
             if (cancelled || registeredDeviceRef.current !== device_id) return;
-            void fetch(`/api/parties/${partyId}/control`, {
+            void fetch(`/api/parties/${sessionKey}/control`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -185,7 +198,7 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
 
           skipLockRef.current = true;
           lastSkipAtRef.current = now;
-          void fetch(`/api/parties/${partyId}/control`, {
+          void fetch(`/api/parties/${sessionKey}/control`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "skip" }),
@@ -204,7 +217,6 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
           setStatus("connect_failed");
           return;
         }
-        // Smooth local progress only — never hits the network.
         localTick = window.setInterval(() => {
           const snap = lastSdkPositionRef.current;
           if (snap.paused) return;
@@ -234,7 +246,7 @@ export function useSpotifyPlayer(enabled: boolean, partyId: string) {
       player?.disconnect();
       playerRef.current = null;
     };
-  }, [enabled, partyId, getOAuthToken]);
+  }, [sessionKey, getOAuthToken]);
 
   return { deviceId, ready, error, status, positionMs, isActiveDevice };
 }

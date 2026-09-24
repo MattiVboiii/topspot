@@ -377,3 +377,65 @@ export async function skipToNext(
     throw new Error(`Skip failed: ${text}`);
   }
 }
+
+export async function createPlaylist(
+  accessToken: string,
+  userId: string,
+  opts: { name: string; description?: string; isPublic?: boolean },
+): Promise<{ id: string; uri: string; externalUrl: string | null }> {
+  const res = await fetch(
+    `${SPOTIFY_API_BASE}/users/${encodeURIComponent(userId)}/playlists`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: opts.name,
+        description: opts.description ?? "",
+        public: opts.isPublic ?? false,
+      }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Create playlist failed: ${text}`);
+  }
+  const data = (await res.json()) as {
+    id: string;
+    uri: string;
+    external_urls?: { spotify?: string };
+  };
+  return {
+    id: data.id,
+    uri: data.uri,
+    externalUrl: data.external_urls?.spotify ?? null,
+  };
+}
+
+export async function addTracksToPlaylist(
+  accessToken: string,
+  playlistId: string,
+  uris: string[],
+): Promise<void> {
+  const chunkSize = 100;
+  for (let i = 0; i < uris.length; i += chunkSize) {
+    const chunk = uris.slice(i, i + chunkSize);
+    const res = await fetch(
+      `${SPOTIFY_API_BASE}/playlists/${encodeURIComponent(playlistId)}/tracks`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ uris: chunk }),
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Add tracks to playlist failed: ${text}`);
+    }
+  }
+}

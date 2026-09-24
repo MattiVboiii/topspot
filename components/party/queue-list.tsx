@@ -1,6 +1,8 @@
 "use client";
 
+import { CoverArt } from "@/components/party/cover-art";
 import { formatDuration } from "@/lib/party/codes";
+import { useT } from "@/lib/i18n/provider";
 import { downvotesEnabled } from "@/lib/party/queue";
 import type { DownvoteMode, PartyTrack } from "@/lib/types/party";
 
@@ -21,6 +23,7 @@ function TrackRow({
   isHost,
   onVote,
   onRemove,
+  labels,
 }: {
   track: PartyTrack;
   index: number;
@@ -29,6 +32,7 @@ function TrackRow({
   isHost?: boolean;
   onVote?: (trackId: string, action: "up" | "down") => void;
   onRemove?: (trackId: string) => void;
+  labels: { upvote: string; downvote: string; remove: string };
 }) {
   return (
     <li className="flex items-center gap-3 rounded-xl bg-[#0c1824] px-3 py-3">
@@ -36,10 +40,9 @@ function TrackRow({
         {index + 1}
       </div>
       {track.albumArtUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <CoverArt
           src={track.albumArtUrl}
-          alt=""
+          size={48}
           className="h-12 w-12 rounded-md object-cover"
         />
       ) : (
@@ -65,7 +68,7 @@ function TrackRow({
                 ? "bg-emerald-400 text-emerald-950"
                 : "bg-white/10 text-white hover:bg-white/20"
             }`}
-            aria-label="Upvote"
+            aria-label={labels.upvote}
           >
             ▲ {track.upVoteCount ?? track.voteCount}
           </button>
@@ -84,7 +87,7 @@ function TrackRow({
                   ? "bg-rose-400 text-rose-950"
                   : "bg-white/10 text-white hover:bg-white/20"
               }`}
-              aria-label="Downvote"
+              aria-label={labels.downvote}
             >
               ▼ {track.downVoteCount ?? 0}
             </button>
@@ -99,7 +102,7 @@ function TrackRow({
           type="button"
           onClick={() => onRemove(track.id)}
           className="rounded-lg px-2 py-2 text-sm text-red-200 hover:bg-red-500/20"
-          aria-label="Remove track"
+          aria-label={labels.remove}
         >
           ✕
         </button>
@@ -116,14 +119,20 @@ export function QueueList({
   onVote,
   onRemove,
 }: Props) {
+  const t = useT();
   const showDownvote = downvotesEnabled(downvoteMode);
-  const requests = tracks.filter((t) => t.source !== "fallback");
-  const fallback = tracks.filter((t) => t.source === "fallback");
+  const requests = tracks.filter((track) => track.source !== "fallback");
+  const fallback = tracks.filter((track) => track.source === "fallback");
+  const rowLabels = {
+    upvote: t.queue.upvote,
+    downvote: t.queue.downvote,
+    remove: t.queue.remove,
+  };
 
   if (!tracks.length) {
     return (
       <p className="rounded-xl border border-dashed border-white/20 px-4 py-10 text-center text-white/60">
-        Queue is empty — search and add the first track.
+        {t.queue.empty}
       </p>
     );
   }
@@ -132,7 +141,7 @@ export function QueueList({
     <div className="flex flex-col gap-6">
       <section>
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300/80">
-          Requests
+          {t.queue.requests}
         </h3>
         {requests.length ? (
           <ul className="flex flex-col gap-2">
@@ -146,12 +155,13 @@ export function QueueList({
                 isHost={isHost}
                 onVote={onVote}
                 onRemove={onRemove}
+                labels={rowLabels}
               />
             ))}
           </ul>
         ) : (
           <p className="rounded-xl border border-dashed border-white/15 px-3 py-4 text-sm text-white/45">
-            No guest requests yet.
+            {t.queue.noRequests}
           </p>
         )}
       </section>
@@ -159,7 +169,7 @@ export function QueueList({
       {(fallback.length > 0 || isHost) && (
         <section>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-sky-300/80">
-            Fallback
+            {t.queue.fallback}
           </h3>
           {fallback.length ? (
             <ul className="flex flex-col gap-2">
@@ -173,12 +183,13 @@ export function QueueList({
                   isHost={isHost}
                   onVote={onVote}
                   onRemove={onRemove}
+                  labels={rowLabels}
                 />
               ))}
             </ul>
           ) : (
             <p className="rounded-xl border border-dashed border-white/15 px-3 py-4 text-sm text-white/45">
-              No fallback tracks — add a playlist in Settings.
+              {t.queue.noFallback}
             </p>
           )}
         </section>

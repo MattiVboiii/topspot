@@ -22,9 +22,6 @@ export async function GET(
     return NextResponse.json({ error: "Party not found" }, { status: 404 });
   }
   const party = await ensurePartyFresh(partySnap.data() as Party);
-  if (!party.isActive) {
-    return NextResponse.json({ error: "Party has ended" }, { status: 410 });
-  }
   return NextResponse.json({ party });
 }
 

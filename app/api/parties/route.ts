@@ -124,6 +124,8 @@ export async function POST(request: NextRequest) {
     downvoteThreshold: null,
     fallbackPlaylistId: null,
     fallbackPlaylistName: null,
+    trackCooldownMinutes: 30,
+    maxActiveRequestsPerGuest: 3,
     playbackSpotifyId: session.spotifyId,
     playbackGuestId: null,
     pendingPlaybackGuestId: null,

@@ -1,5 +1,6 @@
 "use client";
 
+import { useT } from "@/lib/i18n/provider";
 import { useState } from "react";
 
 type Props = {
@@ -7,6 +8,7 @@ type Props = {
 };
 
 export function GuestNameGate({ onSubmit }: Props) {
+  const t = useT();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,25 +23,20 @@ export function GuestNameGate({ onSubmit }: Props) {
         try {
           await onSubmit(name.trim());
         } catch (err) {
-          setError(err instanceof Error ? err.message : "Could not join");
+          setError(err instanceof Error ? err.message : t.guestGate.join);
         } finally {
           setBusy(false);
         }
       }}
     >
-      <h2 className="text-xl font-semibold text-white">
-        Choose a display name
-      </h2>
-      <p className="text-sm text-white/65">
-        The host asked everyone to join with a name so votes are easier to
-        follow.
-      </p>
+      <h2 className="text-xl font-semibold text-white">{t.guestGate.title}</h2>
+      <p className="text-sm text-white/65">{t.guestGate.body}</p>
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
         maxLength={24}
         required
-        placeholder="Your name"
+        placeholder={t.guestGate.nameLabel}
         className="rounded-xl border border-white/15 bg-black/20 px-4 py-3 text-white outline-none ring-emerald-400/50 focus:ring-2"
       />
       {error && <p className="text-sm text-red-300">{error}</p>}
@@ -48,7 +45,7 @@ export function GuestNameGate({ onSubmit }: Props) {
         disabled={busy || name.trim().length < 1}
         className="rounded-xl bg-emerald-400 px-4 py-3 font-semibold text-emerald-950 disabled:opacity-50"
       >
-        {busy ? "Joining…" : "Join party"}
+        {busy ? t.guestGate.joining : t.guestGate.join}
       </button>
     </form>
   );
