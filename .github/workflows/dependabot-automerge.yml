@@ -1,0 +1,73 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Wait for other checks, then squash-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          echo "Waiting for checks on PR #$PR"
+          for i in $(seq 1 60); do
+            json=$(gh pr view "$PR" --json statusCheckRollup,state)
+            state=$(echo "$json" | jq -r .state)
+            if [ "$state" != "OPEN" ]; then
+              echo "PR is $state; nothing to merge"
+              exit 0
+            fi
+            checks=$(echo "$json" | jq -c '
+              (.statusCheckRollup // []) | map({
+                name: (.name // .context // ""),
+                status: (
+                  if .status then (.status | ascii_upcase)
+                  elif ((.state // "") | ascii_upcase) == "PENDING" then "IN_PROGRESS"
+                  elif .state then "COMPLETED"
+                  else "IN_PROGRESS"
+                  end
+                ),
+                conclusion: ((.conclusion // .state // "") | ascii_upcase)
+              })
+            ')
+            echo "$checks" | jq -r '.[] | [.name,.status,.conclusion] | @tsv'
+            pending=$(echo "$checks" | jq '[.[] | select((.name|test("^(auto-merge|Dependabot auto-merge|Cursor |Vercel Preview Comments)")) | not) | select(.status != "COMPLETED")] | length')
+            failed=$(echo "$checks" | jq '[.[] | select((.name|test("^(auto-merge|Dependabot auto-merge|Cursor |Vercel Preview Comments)")) | not) | select(.status == "COMPLETED") | select(.conclusion as $c | ($c != "SUCCESS" and $c != "NEUTRAL" and $c != "SKIPPED"))] | length')
+            total=$(echo "$checks" | jq '[.[] | select((.name|test("^(auto-merge|Dependabot auto-merge|Cursor |Vercel Preview Comments)")) | not)] | length')
+            if [ "$failed" -gt 0 ]; then
+              echo "A required check failed; not merging"
+              exit 1
+            fi
+            if [ "$pending" -eq 0 ] && [ "$total" -gt 0 ]; then
+              echo "All required checks passed"
+              gh pr merge "$PR" --squash --delete-branch
+              exit 0
+            fi
+            # topspot often has no CI besides Dependabot itself — if only ignored checks exist, still merge
+            if [ "$pending" -eq 0 ] && [ "$total" -eq 0 ]; then
+              echo "No external checks; squash-merging Dependabot PR"
+              gh pr merge "$PR" --squash --delete-branch
+              exit 0
+            fi
+            echo "pending=$pending total=$total; sleeping"
+            sleep 15
+          done
+          echo "Timed out waiting for checks"
+          exit 1
