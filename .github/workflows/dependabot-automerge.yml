@@ -24,11 +24,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          echo "Waiting for checks on PR #$PR"
+          echo "Waiting for checks on PR #$PR in $REPO"
           for i in $(seq 1 60); do
-            json=$(gh pr view "$PR" --json statusCheckRollup,state)
+            json=$(gh pr view "$PR" --repo "$REPO" --json statusCheckRollup,state)
             state=$(echo "$json" | jq -r .state)
             if [ "$state" != "OPEN" ]; then
               echo "PR is $state; nothing to merge"
@@ -57,13 +58,13 @@ jobs:
             fi
             if [ "$pending" -eq 0 ] && [ "$total" -gt 0 ]; then
               echo "All required checks passed"
-              gh pr merge "$PR" --squash --delete-branch
+              gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
               exit 0
             fi
             # topspot often has no CI besides Dependabot itself — if only ignored checks exist, still merge
             if [ "$pending" -eq 0 ] && [ "$total" -eq 0 ]; then
               echo "No external checks; squash-merging Dependabot PR"
-              gh pr merge "$PR" --squash --delete-branch
+              gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
               exit 0
             fi
             echo "pending=$pending total=$total; sleeping"
