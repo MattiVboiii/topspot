@@ -17,8 +17,8 @@
     "firebase": "^12.19.0",
     "firebase-admin": "^14.5.0",
     "jose": "^4.15.9",
-    "lucide-react": "^1.48.0",
-    "next": "16.3.6",
+    "lucide-react": "^1.49.0",
+    "next": "16.3.8",
     "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0"
@@ -31,10 +31,10 @@
     "@types/react-dom": "^19",
     "@types/spotify-web-playback-sdk": "^0.1.19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.6",
+    "eslint-config-next": "16.3.8",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.3"
   },
   "packageManager": "pnpm@11.1.3"
 }
