@@ -18,3 +18,5 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: typescript
         update-types: ["version-update:semver-major"]
+      # pnpm-workspace.yaml pins jose to 4.15.9; a 5+ bump does not change the lockfile and fails the update job
+      - dependency-name: jose
